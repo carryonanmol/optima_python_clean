@@ -1,6 +1,6 @@
 # Optima RAG Evaluation Framework
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/I1gorr/optima_python/blob/main/colab/optima_colab.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/carryonanmol/optima_python_clean/blob/main/colab/optima_colab.ipynb)
 
 This project implements a Retrieval-Augmented Generation (RAG) pipeline to evaluate whether LLM enrichment improves code retrieval performance. It compares raw baseline JSON against LLM-enriched JSON files using the same embedding model, queries, chunking, and retrieval configuration.
 
@@ -12,7 +12,7 @@ continues through the controlled embedding, FAISS retrieval, evaluation, and
 plotting pipeline without requiring local Ollama, LM Studio, Docker, or a web
 server.
 
-[Open Optima in Google Colab](https://colab.research.google.com/github/I1gorr/optima_python/blob/main/colab/optima_colab.ipynb)
+[Open Optima in Google Colab](https://colab.research.google.com/github/carryonanmol/optima_python_clean/blob/main/colab/optima_colab.ipynb)
 
 The notebook and its resumable workflow are documented in
 [`colab/README.md`](colab/README.md).
