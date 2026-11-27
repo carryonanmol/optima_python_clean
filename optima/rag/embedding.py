@@ -4,14 +4,13 @@ Handles creation of embeddings and vector indexes using LangChain.
 """
 
 import logging
-import os
-from typing import List, Dict, Any, Optional
-from pathlib import Path
 import time
+from pathlib import Path
+from typing import Any
 
-from langchain_core.documents import Document
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 logger = logging.getLogger(__name__)
@@ -20,8 +19,12 @@ logger = logging.getLogger(__name__)
 class OptimaEmbedder:
     """Handles embedding generation and vector index creation."""
 
-    def __init__(self, embedding_model_name: str = "BAAI/bge-small-en-v1.5",
-                 chunk_size: int = 1000, chunk_overlap: int = 200):
+    def __init__(
+        self,
+        embedding_model_name: str = "BAAI/bge-small-en-v1.5",
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200,
+    ):
         """
         Initialize the embedder.
 
@@ -49,15 +52,15 @@ class OptimaEmbedder:
             logger.info(f"Initializing embedding model: {self.embedding_model_name}")
             self.embeddings = HuggingFaceEmbeddings(
                 model_name=self.embedding_model_name,
-                model_kwargs={'device': 'cpu'},
-                encode_kwargs={'normalize_embeddings': True}
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"normalize_embeddings": True},
             )
             logger.info("Embedding model initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize embedding model: {e}")
             raise
 
-    def embed_documents(self, documents: List[Document]) -> List[List[float]]:
+    def embed_documents(self, documents: list[Document]) -> list[list[float]]:
         """
         Generate embeddings for a list of documents.
 
@@ -83,7 +86,7 @@ class OptimaEmbedder:
         logger.info(f"Generated embeddings in {elapsed_time:.2f} seconds")
         return embeddings
 
-    def embed_query(self, query: str) -> List[float]:
+    def embed_query(self, query: str) -> list[float]:
         """
         Generate embedding for a query string.
 
@@ -98,8 +101,7 @@ class OptimaEmbedder:
 
         return self.embeddings.embed_query(query)
 
-    def create_vector_index(self, documents: List[Document],
-                          index_path: Path) -> FAISS:
+    def create_vector_index(self, documents: list[Document], index_path: Path) -> FAISS:
         """
         Create a FAISS vector index from documents.
 
@@ -135,7 +137,7 @@ class OptimaEmbedder:
 
         return vector_store
 
-    def load_vector_index(self, index_path: Path) -> Optional[FAISS]:
+    def load_vector_index(self, index_path: Path) -> FAISS | None:
         """
         Load a FAISS vector index from disk.
 
@@ -152,9 +154,7 @@ class OptimaEmbedder:
         try:
             logger.info(f"Loading vector index from {index_path}")
             vector_store = FAISS.load_local(
-                str(index_path),
-                self.embeddings,
-                allow_dangerous_deserialization=True
+                str(index_path), self.embeddings, allow_dangerous_deserialization=True
             )
             logger.info("Vector index loaded successfully")
             return vector_store
@@ -162,7 +162,7 @@ class OptimaEmbedder:
             logger.error(f"Failed to load vector index: {e}")
             return None
 
-    def get_embedding_metrics(self, documents: List[Document]) -> Dict[str, Any]:
+    def get_embedding_metrics(self, documents: list[Document]) -> dict[str, Any]:
         """
         Get metrics about the embedding process.
 
@@ -189,15 +189,19 @@ class OptimaEmbedder:
             "estimated_tokens": estimated_tokens,
             "embedding_model": self.embedding_model_name,
             "chunk_size": self.chunk_size,
-            "chunk_overlap": self.chunk_overlap
+            "chunk_overlap": self.chunk_overlap,
         }
 
         return metrics
 
 
-def embed_corpus(json_path: Path, enrichment_model: Optional[str],
-                embedding_model_name: str, output_base_dir: Path,
-                representation_mode: str = "hybrid") -> Dict[str, Any]:
+def embed_corpus(
+    json_path: Path,
+    enrichment_model: str | None,
+    embedding_model_name: str,
+    output_base_dir: Path,
+    representation_mode: str = "hybrid",
+) -> dict[str, Any]:
     """
     Embed a single JSON corpus and create vector index.
 
@@ -216,6 +220,7 @@ def embed_corpus(json_path: Path, enrichment_model: Optional[str],
 
     # Construct documents
     from .document_constructor import OptimaDocumentConstructor
+
     constructor = OptimaDocumentConstructor(representation_mode=representation_mode)
     documents = constructor.construct_documents_from_json(
         json_path, enrichment_model=enrichment_model
@@ -227,7 +232,7 @@ def embed_corpus(json_path: Path, enrichment_model: Optional[str],
     # Get document construction metrics
     doc_constructor_metrics = {
         "num_documents": len(documents),
-        "representation_mode": representation_mode
+        "representation_mode": representation_mode,
     }
 
     # Initialize embedder
@@ -259,7 +264,9 @@ def embed_corpus(json_path: Path, enrichment_model: Optional[str],
     index_metrics = {
         "index_path": str(index_dir),
         "index_size_mb": round(index_size_mb, 2),
-        "num_chunks_in_index": vector_store.index.ntotal if hasattr(vector_store.index, 'ntotal') else 0
+        "num_chunks_in_index": vector_store.index.ntotal
+        if hasattr(vector_store.index, "ntotal")
+        else 0,
     }
 
     elapsed_time = time.time() - start_time
@@ -273,15 +280,16 @@ def embed_corpus(json_path: Path, enrichment_model: Optional[str],
         "elapsed_time_seconds": round(elapsed_time, 2),
         "document_constructor_metrics": doc_constructor_metrics,
         "embedding_metrics": embedding_metrics,
-        "index_metrics": index_metrics
+        "index_metrics": index_metrics,
     }
 
     logger.info(f"Completed embedding process for {json_path} in {elapsed_time:.2f} seconds")
     return result
 
 
-def embed_all_corpora(output_dir: Path, embedding_model_name: str,
-                     representation_mode: str = "hybrid") -> Dict[str, Any]:
+def embed_all_corpora(
+    output_dir: Path, embedding_model_name: str, representation_mode: str = "hybrid"
+) -> dict[str, Any]:
     """
     Embed all discovered JSON corpora.
 
@@ -312,7 +320,7 @@ def embed_all_corpora(output_dir: Path, embedding_model_name: str,
         "embedding_model": embedding_model_name,
         "representation_mode": representation_mode,
         "corpora": {},
-        "summary": {}
+        "summary": {},
     }
 
     # Embed each corpus
@@ -326,7 +334,7 @@ def embed_all_corpora(output_dir: Path, embedding_model_name: str,
                 enrichment_model=enrichment_model,
                 embedding_model_name=embedding_model_name,
                 output_base_dir=rag_report_dir,
-                representation_mode=representation_mode
+                representation_mode=representation_mode,
             )
 
             results["corpora"][corpus_name] = corpus_result
@@ -337,7 +345,7 @@ def embed_all_corpora(output_dir: Path, embedding_model_name: str,
                 "success": False,
                 "error": str(e),
                 "corpus_name": corpus_name,
-                "json_path": str(json_path)
+                "json_path": str(json_path),
             }
 
     # Calculate summary
@@ -348,7 +356,7 @@ def embed_all_corpora(output_dir: Path, embedding_model_name: str,
         "total_corpora": len(json_files),
         "successful_corpora": successful,
         "failed_corpora": len(json_files) - successful,
-        "total_elapsed_time_seconds": round(total_time, 2)
+        "total_elapsed_time_seconds": round(total_time, 2),
     }
 
     logger.info(f"Completed embedding all corpora: {successful}/{len(json_files)} successful")
@@ -371,7 +379,7 @@ if __name__ == "__main__":
             enrichment_model=None,
             embedding_model_name=embedding_model,
             output_base_dir=output_dir.parent / "rag_report",
-            representation_mode="hybrid"
+            representation_mode="hybrid",
         )
         print(f"Embedding result: {result['success']}")
         print(f"Documents: {result['num_documents']}")

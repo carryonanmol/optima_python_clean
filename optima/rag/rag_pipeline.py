@@ -5,14 +5,14 @@ Handles the full Retrieval-Augmented Generation process.
 
 import logging
 import time
-from typing import List, Dict, Any, Optional
 from pathlib import Path
+from typing import Any
 
-from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
 from langchain_core.language_models import BaseLLM
-from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 
 logger = logging.getLogger(__name__)
@@ -21,8 +21,9 @@ logger = logging.getLogger(__name__)
 class OptimaRAGPipeline:
     """RAG pipeline for Optima system."""
 
-    def __init__(self, vector_store: FAISS, llm: BaseLLM,
-                 k: int = 5, prompt_template: Optional[str] = None):
+    def __init__(
+        self, vector_store: FAISS, llm: BaseLLM, k: int = 5, prompt_template: str | None = None
+    ):
         """
         Initialize the RAG pipeline.
 
@@ -58,14 +59,11 @@ Answer: """
         """Set up the RAG chain."""
         try:
             # Set up retriever
-            self.retriever = self.vector_store.as_retriever(
-                search_kwargs={"k": self.k}
-            )
+            self.retriever = self.vector_store.as_retriever(search_kwargs={"k": self.k})
 
             # Set up prompt
             prompt = PromptTemplate(
-                template=self.prompt_template,
-                input_variables=["context", "question"]
+                template=self.prompt_template, input_variables=["context", "question"]
             )
 
             # Set up RAG chain
@@ -80,11 +78,11 @@ Answer: """
             logger.error(f"Failed to setup RAG chain: {e}")
             raise
 
-    def _format_docs(self, docs: List[Document]) -> str:
+    def _format_docs(self, docs: list[Document]) -> str:
         """Format documents for inclusion in prompt."""
         return "\n\n".join(doc.page_content for doc in docs)
 
-    def query(self, question: str) -> Dict[str, Any]:
+    def query(self, question: str) -> dict[str, Any]:
         """
         Query the RAG pipeline.
 
@@ -114,7 +112,7 @@ Answer: """
                 "answer": answer,
                 "source_documents": source_docs,
                 "num_source_documents": len(source_docs),
-                "response_time_seconds": round(elapsed_time, 3)
+                "response_time_seconds": round(elapsed_time, 3),
             }
 
             logger.info(f"Query processed in {elapsed_time:.3f}s")
@@ -124,7 +122,7 @@ Answer: """
             logger.error(f"Error processing query: {e}")
             raise
 
-    def query_with_metadata(self, question: str) -> Dict[str, Any]:
+    def query_with_metadata(self, question: str) -> dict[str, Any]:
         """
         Query the RAG pipeline and return detailed metadata.
 
@@ -146,7 +144,7 @@ Answer: """
                 "file_name": doc.metadata.get("file_name", ""),
                 "corpus_type": doc.metadata.get("corpus_type", ""),
                 "enrichment_model": doc.metadata.get("enrichment_model", ""),
-                "representation_mode": doc.metadata.get("representation_mode", "")
+                "representation_mode": doc.metadata.get("representation_mode", ""),
             }
             source_metadata.append(metadata)
 
@@ -154,9 +152,13 @@ Answer: """
         return result
 
 
-def create_rag_pipeline_from_corpus(corpus_name: str, embedding_model_name: str,
-                                  llm: BaseLLM, k: int = 5,
-                                  output_base_dir: Path = None) -> OptimaRAGPipeline:
+def create_rag_pipeline_from_corpus(
+    corpus_name: str,
+    embedding_model_name: str,
+    llm: BaseLLM,
+    k: int = 5,
+    output_base_dir: Path = None,
+) -> OptimaRAGPipeline:
     """
     Create a RAG pipeline from a specific corpus.
 
@@ -183,6 +185,7 @@ def create_rag_pipeline_from_corpus(corpus_name: str, embedding_model_name: str,
     if vector_store is None:
         # Preserve the historical layout for callers with existing indexes.
         from .evaluation import load_corpus_indices
+
         legacy = load_corpus_indices(output_base_dir, embedding_model_name)
         vector_store = legacy.get(corpus_name)
 
@@ -193,9 +196,14 @@ def create_rag_pipeline_from_corpus(corpus_name: str, embedding_model_name: str,
     return OptimaRAGPipeline(vector_store=vector_store, llm=llm, k=k)
 
 
-def rag_query(corpus_name: str, embedding_model_name: str, llm: BaseLLM,
-              question: str, k: int = 5,
-              output_base_dir: Path = None) -> Dict[str, Any]:
+def rag_query(
+    corpus_name: str,
+    embedding_model_name: str,
+    llm: BaseLLM,
+    question: str,
+    k: int = 5,
+    output_base_dir: Path = None,
+) -> dict[str, Any]:
     """
     Convenience function for a single RAG query.
 
@@ -215,7 +223,7 @@ def rag_query(corpus_name: str, embedding_model_name: str, llm: BaseLLM,
         embedding_model_name=embedding_model_name,
         llm=llm,
         k=k,
-        output_base_dir=output_base_dir
+        output_base_dir=output_base_dir,
     )
     return pipeline.query(question)
 

@@ -13,19 +13,18 @@ import logging
 import shutil
 import time
 import zipfile
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from tqdm.auto import tqdm
 
 from optima.enricher import (
-    ENRICHMENT_JSON_SCHEMA,
     _dataset_metrics,
     _evaluation,
     _parse_json_object,
 )
 from optima.rag.embedding_simple import (
-    EMBEDDING_REGISTRY,
     embed_corpus,
     embedding_alias,
 )
@@ -47,12 +46,26 @@ from optima.rag.evaluation import (
 logger = logging.getLogger(__name__)
 
 ENRICHMENT_FIELDS = (
-    "purpose", "behavior", "summary", "inputs", "outputs", "side_effects",
-    "dependencies", "concepts", "keywords", "algorithm", "complexity",
+    "purpose",
+    "behavior",
+    "summary",
+    "inputs",
+    "outputs",
+    "side_effects",
+    "dependencies",
+    "concepts",
+    "keywords",
+    "algorithm",
+    "complexity",
 )
 STRING_FIELDS = ("purpose", "behavior", "summary", "algorithm")
 ARRAY_FIELDS = (
-    "inputs", "outputs", "side_effects", "dependencies", "concepts", "keywords",
+    "inputs",
+    "outputs",
+    "side_effects",
+    "dependencies",
+    "concepts",
+    "keywords",
 )
 
 
@@ -70,9 +83,7 @@ def save_json(value: dict[str, Any], path: str | Path) -> Path:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.tmp")
-    temporary.write_text(
-        json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     temporary.replace(destination)
     return destination
 
@@ -92,14 +103,16 @@ def inspect_json(path: str | Path) -> dict[str, Any]:
     data = load_json(path)
     functions = flatten_functions(data)
     fields = sorted({key for function in functions for key in function})
-    enrichment_fields = sorted({
-        key for function in functions
-        for key in (
-            function.get("enrichment")
-            if isinstance(function.get("enrichment"), dict) else {}
-        )
-        if key not in {"evaluation", "usage"}
-    })
+    enrichment_fields = sorted(
+        {
+            key
+            for function in functions
+            for key in (
+                function.get("enrichment") if isinstance(function.get("enrichment"), dict) else {}
+            )
+            if key not in {"evaluation", "usage"}
+        }
+    )
     info = {
         "path": str(path),
         "files": len(data.get("files", [])),
@@ -116,7 +129,7 @@ def inspect_json(path: str | Path) -> dict[str, Any]:
     }
     print(f"Number of nodes: {info['nodes']}")
     print(f"Available fields: {', '.join(fields) or '(none)'}")
-    print(f"Nested structure: project -> files[] -> functions[]")
+    print("Nested structure: project -> files[] -> functions[]")
     print(f"Enrichment fields already present: {', '.join(enrichment_fields) or 'none'}")
     return info
 
@@ -140,30 +153,36 @@ def validate_json(path: str | Path) -> dict[str, Any]:
             continue
         for function_index, function in enumerate(file_data["functions"]):
             if not isinstance(function, dict):
-                malformed_nodes.append({
-                    "file_index": file_index,
-                    "function_index": function_index,
-                    "missing_fields": list(required_function_fields),
-                    "reason": "function entry is not an object",
-                })
+                malformed_nodes.append(
+                    {
+                        "file_index": file_index,
+                        "function_index": function_index,
+                        "missing_fields": list(required_function_fields),
+                        "reason": "function entry is not an object",
+                    }
+                )
                 continue
             missing = [field for field in required_function_fields if not function.get(field)]
             if missing:
-                malformed_nodes.append({
-                    "file_index": file_index,
-                    "function_index": function_index,
-                    "missing_fields": missing,
-                    "reason": "required function identity field is missing",
-                })
+                malformed_nodes.append(
+                    {
+                        "file_index": file_index,
+                        "function_index": function_index,
+                        "missing_fields": missing,
+                        "reason": "required function identity field is missing",
+                    }
+                )
             if "enrichment" in function:
                 enrichment = function["enrichment"]
                 valid, reason = _valid_enrichment(enrichment)
                 if not valid:
-                    malformed_enrichment.append({
-                        "file_index": file_index,
-                        "function_index": function_index,
-                        "reason": reason,
-                    })
+                    malformed_enrichment.append(
+                        {
+                            "file_index": file_index,
+                            "function_index": function_index,
+                            "reason": reason,
+                        }
+                    )
     info["status"] = "ENRICHED JSON" if info["enrichment_fields"] else "BASE JSON"
     info["enrichment_required"] = info["status"] == "BASE JSON"
     info["required_fields"] = {
@@ -281,10 +300,16 @@ def _fallback(reason: str, model_id: str, retries: int) -> dict[str, Any]:
         "purpose": "Insufficient implementation context.",
         "behavior": "Insufficient implementation context.",
         "summary": "Insufficient implementation context.",
-        "inputs": [], "outputs": [], "side_effects": [], "dependencies": [],
-        "concepts": [], "keywords": [], "algorithm": "unknown",
+        "inputs": [],
+        "outputs": [],
+        "side_effects": [],
+        "dependencies": [],
+        "concepts": [],
+        "keywords": [],
+        "algorithm": "unknown",
         "complexity": {"time": "unknown", "space": "unknown"},
-        "model": model_id, "status": "failed",
+        "model": model_id,
+        "status": "failed",
         "evaluation": {"failure_reason": reason, "retry_count": retries},
     }
 
@@ -320,7 +345,7 @@ def load_model(model_id: str, load_in_4bit: bool = True):
     try:
         model = AutoModelForCausalLM.from_pretrained(model_id, **kwargs)
     except (RuntimeError, OSError, ValueError) as exc:
-        memory = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         mode = "4-bit quantization" if load_in_4bit else "full precision"
         raise RuntimeError(
             f"Could not load {model_id!r} with {mode} on the available GPU "
@@ -333,28 +358,31 @@ def load_model(model_id: str, load_in_4bit: bool = True):
     return tokenizer, model
 
 
-def _generate(model: Any, tokenizer: Any, messages: list[dict[str, str]],
-              max_new_tokens: int, context_length: int = 8192) -> tuple[str, int | None]:
+def _generate(
+    model: Any,
+    tokenizer: Any,
+    messages: list[dict[str, str]],
+    max_new_tokens: int,
+    context_length: int = 8192,
+) -> tuple[str, int | None]:
     import torch
 
     if hasattr(tokenizer, "apply_chat_template"):
-        prompt = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
+        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     else:
         prompt = "\n\n".join(f"{item['role']}: {item['content']}" for item in messages)
     input_limit = max(256, context_length - max_new_tokens)
-    encoded = tokenizer(
-        prompt, return_tensors="pt", truncation=True, max_length=input_limit
-    )
+    encoded = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=input_limit)
     device = next(model.parameters()).device
     encoded = {key: value.to(device) for key, value in encoded.items()}
     with torch.inference_mode():
         output = model.generate(
-            **encoded, max_new_tokens=max_new_tokens, do_sample=False,
+            **encoded,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
             pad_token_id=tokenizer.eos_token_id,
         )
-    generated = output[0][encoded["input_ids"].shape[1]:]
+    generated = output[0][encoded["input_ids"].shape[1] :]
     return tokenizer.decode(generated, skip_special_tokens=True), int(generated.numel())
 
 
@@ -397,8 +425,11 @@ def enrich_nodes(
             used_retries = attempt
             try:
                 text, generated_tokens = _generate(
-                    model, tokenizer, build_enrichment_messages(function),
-                    max_new_tokens, context_length
+                    model,
+                    tokenizer,
+                    build_enrichment_messages(function),
+                    max_new_tokens,
+                    context_length,
                 )
                 parsed, parse_reason = _parse_json_object(text)
                 valid, schema_reason = _valid_enrichment(parsed)
@@ -448,8 +479,12 @@ def enrich_nodes(
         "resumed_functions": len(all_selected) - len(latencies),
     }
     result["experiment"] = {
-        "model": model_id, "temperature": 0.0, "batch_size": 1,
-        "prompt_version": "v2", "schema_version": "v1", "base_json": str(input_json),
+        "model": model_id,
+        "temperature": 0.0,
+        "batch_size": 1,
+        "prompt_version": "v2",
+        "schema_version": "v1",
+        "base_json": str(input_json),
     }
     result["enrichment_metrics"] = {
         **_dataset_metrics(all_selected, elapsed),
@@ -464,8 +499,9 @@ def enrich_nodes(
     return result["enrichment_metrics"]
 
 
-def prepare_workspace(base_json: str | Path, enriched_json: str | Path,
-                      workspace: str | Path, corpus_name: str) -> Path:
+def prepare_workspace(
+    base_json: str | Path, enriched_json: str | Path, workspace: str | Path, corpus_name: str
+) -> Path:
     """Create the standard filenames expected by Optima's discovery helpers."""
     root = Path(workspace)
     root.mkdir(parents=True, exist_ok=True)
@@ -475,29 +511,51 @@ def prepare_workspace(base_json: str | Path, enriched_json: str | Path,
     return root
 
 
-def build_index(enriched_json: str | Path, corpus_name: str, embedding_model: str,
-                report_dir: str | Path, representation_mode: str = "hybrid",
-                force: bool = False) -> dict[str, Any]:
+def build_index(
+    enriched_json: str | Path,
+    corpus_name: str,
+    embedding_model: str,
+    report_dir: str | Path,
+    representation_mode: str = "hybrid",
+    force: bool = False,
+) -> dict[str, Any]:
     """Call the existing Optima embedding/index implementation."""
     return embed_corpus(
-        Path(enriched_json), corpus_name, embedding_model, Path(report_dir),
-        representation_mode, force=force,
+        Path(enriched_json),
+        corpus_name,
+        embedding_model,
+        Path(report_dir),
+        representation_mode,
+        force=force,
     )
 
 
-def build_raw_index(base_json: str | Path, embedding_model: str,
-                    report_dir: str | Path, representation_mode: str = "hybrid",
-                    force: bool = False) -> dict[str, Any]:
+def build_raw_index(
+    base_json: str | Path,
+    embedding_model: str,
+    report_dir: str | Path,
+    representation_mode: str = "hybrid",
+    force: bool = False,
+) -> dict[str, Any]:
     return embed_corpus(
-        Path(base_json), None, embedding_model, Path(report_dir),
-        representation_mode, force=force,
+        Path(base_json),
+        None,
+        embedding_model,
+        Path(report_dir),
+        representation_mode,
+        force=force,
     )
 
 
-def run_evaluation(report_dir: str | Path, embedding_models: Iterable[str],
-                   benchmark_path: str | Path | None = None,
-                   benchmark_source: str | Path | None = None, num_queries: int = 20,
-                   k: int = 10, output_dir: str | Path | None = None) -> dict[str, Any]:
+def run_evaluation(
+    report_dir: str | Path,
+    embedding_models: Iterable[str],
+    benchmark_path: str | Path | None = None,
+    benchmark_source: str | Path | None = None,
+    num_queries: int = 20,
+    k: int = 10,
+    output_dir: str | Path | None = None,
+) -> dict[str, Any]:
     """Run the existing matrix evaluation and write its normal CSV/plot artifacts."""
     report = Path(report_dir)
     if benchmark_path and Path(benchmark_path).exists():
@@ -526,8 +584,16 @@ def run_evaluation(report_dir: str | Path, embedding_models: Iterable[str],
     save_best_tables(matrix, destination / "best_tables.csv")
     save_best_combinations(matrix, destination)
     generate_visualizations(matrix, destination / "plots")
-    save_json({"embedding_models": aliases, "benchmark": str(benchmark), "k": k,
-               "queries": len(queries), "results": matrix}, destination / "results.json")
+    save_json(
+        {
+            "embedding_models": aliases,
+            "benchmark": str(benchmark),
+            "k": k,
+            "queries": len(queries),
+            "results": matrix,
+        },
+        destination / "results.json",
+    )
     return matrix
 
 
@@ -538,29 +604,37 @@ def evaluation_summary(matrix: dict[str, Any]) -> dict[str, Any]:
         for corpus, metrics in corpora.items():
             if not isinstance(metrics, dict) or "error" in metrics:
                 continue
-            rows.append({
-                "embedding_model": embedding,
-                "corpus": corpus,
-                "recall_at_5": metrics.get("recall_at_5"),
-                "mrr": metrics.get("mrr"),
-                "mean_latency": metrics.get("mean_latency"),
-                "num_queries": metrics.get("num_queries"),
-                "document_count": metrics.get("document_count"),
-            })
+            rows.append(
+                {
+                    "embedding_model": embedding,
+                    "corpus": corpus,
+                    "recall_at_5": metrics.get("recall_at_5"),
+                    "mrr": metrics.get("mrr"),
+                    "mean_latency": metrics.get("mean_latency"),
+                    "num_queries": metrics.get("num_queries"),
+                    "document_count": metrics.get("document_count"),
+                }
+            )
     if not rows:
         raise ValueError("Evaluation produced no successful corpus results")
     return {"rows": rows}
 
 
-def save_experiment_summary(path: str | Path, *, model_id: str,
-                            embedding_model: str, representation_mode: str,
-                            input_json: str | Path, nodes: int,
-                            enrichment_metrics: dict[str, Any] | None,
-                            index_results: Iterable[dict[str, Any]],
-                            matrix: dict[str, Any],
-                            k: int | None = None,
-                            enriched_json: str | Path | None = None,
-                            output_paths: dict[str, str] | None = None) -> Path:
+def save_experiment_summary(
+    path: str | Path,
+    *,
+    model_id: str,
+    embedding_model: str,
+    representation_mode: str,
+    input_json: str | Path,
+    nodes: int,
+    enrichment_metrics: dict[str, Any] | None,
+    index_results: Iterable[dict[str, Any]],
+    matrix: dict[str, Any],
+    k: int | None = None,
+    enriched_json: str | Path | None = None,
+    output_paths: dict[str, str] | None = None,
+) -> Path:
     """Save a human-readable and machine-readable final experiment summary."""
     rows = evaluation_summary(matrix)["rows"]
     enrichment = enrichment_metrics or {}
@@ -600,21 +674,29 @@ def save_experiment_summary(path: str | Path, *, model_id: str,
     return destination
 
 
-def retrieve(report_dir: str | Path, corpus_name: str, embedding_model: str,
-             query: str, k: int = 5) -> list[dict[str, Any]]:
+def retrieve(
+    report_dir: str | Path, corpus_name: str, embedding_model: str, query: str, k: int = 5
+) -> list[dict[str, Any]]:
     """Run the existing FAISS retrieval path and return serializable results."""
     indices = load_corpus_indices(Path(report_dir), embedding_model)
     if corpus_name not in indices:
         raise FileNotFoundError(f"No index for corpus={corpus_name}, embedding={embedding_model}")
     store = indices[corpus_name]
-    docs = store.similarity_search(query, k=k) if hasattr(store, "similarity_search") else (
-        store.as_retriever(search_kwargs={"k": k}).invoke(query)
+    docs = (
+        store.similarity_search(query, k=k)
+        if hasattr(store, "similarity_search")
+        else (store.as_retriever(search_kwargs={"k": k}).invoke(query))
     )
-    return [{"rank": rank, "function_id": doc.metadata.get("function_id", ""),
-             "function_name": doc.metadata.get("function_name", ""),
-             "file_name": doc.metadata.get("file_name", ""),
-             "content": doc.page_content}
-            for rank, doc in enumerate(docs, 1)]
+    return [
+        {
+            "rank": rank,
+            "function_id": doc.metadata.get("function_id", ""),
+            "function_name": doc.metadata.get("function_name", ""),
+            "file_name": doc.metadata.get("file_name", ""),
+            "content": doc.page_content,
+        }
+        for rank, doc in enumerate(docs, 1)
+    ]
 
 
 def zip_outputs(output_root: str | Path, zip_path: str | Path) -> Path:

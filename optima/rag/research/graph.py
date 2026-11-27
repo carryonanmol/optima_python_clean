@@ -24,8 +24,9 @@ that the pipeline fuses with RRF (see ``pipeline.py``).
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any
 
 from .corpus import Corpus
 
@@ -39,12 +40,12 @@ RELATION_TO_DIRECTION = {
 
 @dataclass(frozen=True)
 class GraphEvidence:
-    seed: str                  # seed function the path started from
-    seed_rank: int             # that seed's 1-based rank in the first-stage ranking
-    parent: str                # node the edge was followed from
-    relation: str              # callees | callers | dependencies | enriched_dependencies
+    seed: str  # seed function the path started from
+    seed_rank: int  # that seed's 1-based rank in the first-stage ranking
+    parent: str  # node the edge was followed from
+    relation: str  # callees | callers | dependencies | enriched_dependencies
     hop: int
-    edge_sources: Tuple[str, ...]   # where the edge was observed in the JSON
+    edge_sources: tuple[str, ...]  # where the edge was observed in the JSON
 
 
 @dataclass
@@ -52,7 +53,7 @@ class GraphCandidate:
     id: str
     hop: int
     is_seed: bool
-    evidence: List[GraphEvidence] = field(default_factory=list)
+    evidence: list[GraphEvidence] = field(default_factory=list)
 
     @property
     def support(self) -> int:
@@ -63,17 +64,18 @@ class GraphCandidate:
         return min(e.seed_rank for e in self.evidence)
 
     @property
-    def relations(self) -> Tuple[str, ...]:
+    def relations(self) -> tuple[str, ...]:
         return tuple(sorted({e.relation for e in self.evidence}))
 
 
 class GraphIndex:
     def __init__(self, corpus: Corpus):
         self._order = {ident: i for i, ident in enumerate(corpus.records)}
-        self._adj: Dict[str, Dict[str, List[str]]] = {
-            rel: defaultdict(list) for rel in RELATION_TO_DIRECTION}
-        self._edge_sources: Dict[Tuple[str, str, str], set] = defaultdict(set)
-        self.stats: Dict[str, Any] = {}
+        self._adj: dict[str, dict[str, list[str]]] = {
+            rel: defaultdict(list) for rel in RELATION_TO_DIRECTION
+        }
+        self._edge_sources: dict[tuple[str, str, str], set] = defaultdict(set)
+        self.stats: dict[str, Any] = {}
         self._build(corpus)
 
     # ------------------------------------------------------------------ build
@@ -108,8 +110,8 @@ class GraphIndex:
         for src, dst in corpus.extra_edges:
             dangling += self._add("callees", src, dst, "graph.call_edges") == "dangling"
 
-        by_qualified: Dict[str, List[str]] = defaultdict(list)
-        by_name: Dict[str, List[str]] = defaultdict(list)
+        by_qualified: dict[str, list[str]] = defaultdict(list)
+        by_name: dict[str, list[str]] = defaultdict(list)
         for record in corpus.records.values():
             by_qualified[record.qualified_name].append(record.id)
             by_name[record.name].append(record.id)
@@ -117,14 +119,21 @@ class GraphIndex:
         for record in corpus.records.values():
             for dep in record.dependencies:
                 ident = dep.get("id") if isinstance(dep, dict) else dep
-                outcome = self._add("dependencies", record.id, ident,
-                                    "dependencies") if isinstance(ident, str) else "dangling"
+                outcome = (
+                    self._add("dependencies", record.id, ident, "dependencies")
+                    if isinstance(ident, str)
+                    else "dangling"
+                )
                 unresolved_deps += outcome == "dangling"
             for dep_name in record.enriched_dependencies:
                 matches = by_qualified.get(dep_name) or by_name.get(dep_name) or []
                 if len(matches) == 1:
-                    self._add("enriched_dependencies", record.id, matches[0],
-                              "llm_enrichment.dependencies")
+                    self._add(
+                        "enriched_dependencies",
+                        record.id,
+                        matches[0],
+                        "llm_enrichment.dependencies",
+                    )
                 elif len(matches) > 1:
                     ambiguous += 1
                 else:
@@ -147,10 +156,10 @@ class GraphIndex:
         }
 
     # -------------------------------------------------------------- inspection
-    def neighbours(self, ident: str, relation: str) -> List[str]:
+    def neighbours(self, ident: str, relation: str) -> list[str]:
         return list(self._adj[relation].get(ident, ()))
 
-    def edge_sources(self, src: str, dst: str, relation: str) -> Tuple[str, ...]:
+    def edge_sources(self, src: str, dst: str, relation: str) -> tuple[str, ...]:
         if relation == "callees":
             key = ("calls", src, dst)
         elif relation == "callers":
@@ -167,9 +176,14 @@ class GraphIndex:
         return self.stats["enriched_dependency_edges"]
 
     # --------------------------------------------------------------- traversal
-    def expand(self, seeds: Sequence[Tuple[str, int]], relations: Sequence[str],
-               max_depth: int = 1, max_neighbors: int = 20,
-               max_added: int = 20) -> List[GraphCandidate]:
+    def expand(
+        self,
+        seeds: Sequence[tuple[str, int]],
+        relations: Sequence[str],
+        max_depth: int = 1,
+        max_neighbors: int = 20,
+        max_added: int = 20,
+    ) -> list[GraphCandidate]:
         """Breadth-first expansion from ``seeds`` = ``[(function_id, rank), ...]``.
 
         Returns graph candidates in discovery order.  New non-seed candidates are
@@ -182,12 +196,12 @@ class GraphIndex:
             if relation not in RELATION_TO_DIRECTION:
                 raise ValueError(f"unknown graph relation {relation!r}")
         seed_rank = {ident: rank for ident, rank in seeds if ident in self._order}
-        candidates: Dict[str, GraphCandidate] = {}
-        hop_of: Dict[str, int] = {ident: 0 for ident in seed_rank}
-        frontier: Dict[str, List[str]] = {ident: [ident] for ident in seed_rank}
+        candidates: dict[str, GraphCandidate] = {}
+        hop_of: dict[str, int] = {ident: 0 for ident in seed_rank}
+        frontier: dict[str, list[str]] = {ident: [ident] for ident in seed_rank}
         added = 0
         for depth in range(1, max_depth + 1):
-            next_frontier: Dict[str, List[str]] = {}
+            next_frontier: dict[str, list[str]] = {}
             for node, origins in frontier.items():
                 for relation in relations:
                     for neighbour in self._adj[relation].get(node, ())[:max_neighbors]:
@@ -202,8 +216,7 @@ class GraphIndex:
                             # A seed reached from another seed.
                             if all(o == neighbour for o in origins):
                                 continue
-                            candidates.setdefault(
-                                neighbour, GraphCandidate(neighbour, depth, True))
+                            candidates.setdefault(neighbour, GraphCandidate(neighbour, depth, True))
                         elif known_hop != depth:
                             continue
                         candidate = candidates[neighbour]
@@ -211,8 +224,11 @@ class GraphIndex:
                         for origin in origins:
                             if origin == neighbour:
                                 continue
-                            candidate.evidence.append(GraphEvidence(
-                                origin, seed_rank[origin], node, relation, depth, sources))
+                            candidate.evidence.append(
+                                GraphEvidence(
+                                    origin, seed_rank[origin], node, relation, depth, sources
+                                )
+                            )
                         if known_hop != 0:
                             bucket = next_frontier.setdefault(neighbour, [])
                             bucket.extend(o for o in origins if o not in bucket)
@@ -221,7 +237,7 @@ class GraphIndex:
                 break
         return [c for c in candidates.values() if c.evidence]
 
-    def order_for_fusion(self, candidates: Iterable[GraphCandidate]) -> List[GraphCandidate]:
+    def order_for_fusion(self, candidates: Iterable[GraphCandidate]) -> list[GraphCandidate]:
         """Deterministic graph-only ordering.
 
         Nearer hops first; within a hop, neighbours of better-ranked seeds first
@@ -230,5 +246,5 @@ class GraphIndex:
         seed); then more distinct supporting seeds; then corpus order.
         """
         return sorted(
-            candidates,
-            key=lambda c: (c.hop, c.best_seed_rank, -c.support, self._order[c.id]))
+            candidates, key=lambda c: (c.hop, c.best_seed_rank, -c.support, self._order[c.id])
+        )

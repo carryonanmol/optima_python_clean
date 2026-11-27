@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 FIELDS = ("purpose", "behavior", "inputs", "outputs", "side_effects")
 
 

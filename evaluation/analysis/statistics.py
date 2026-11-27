@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from math import sqrt
 from statistics import mean
-from typing import Iterable
 
 
 def paired_difference(a: Iterable[float], b: Iterable[float]) -> dict[str, float | int | None]:

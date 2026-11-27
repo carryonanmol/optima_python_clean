@@ -1,8 +1,8 @@
-from pathlib import Path
 import json
-import pandas as pd
-import matplotlib.pyplot as plt
+from pathlib import Path
 
+import matplotlib.pyplot as plt
+import pandas as pd
 
 # ============================================================
 # PATH
@@ -41,10 +41,7 @@ if not OUTPUT_DIR.exists():
 # FIND JSON FILES
 # ============================================================
 
-files = sorted(
-    f for f in OUTPUT_DIR.glob("*.json")
-    if f.name.lower() != "base.json"
-)
+files = sorted(f for f in OUTPUT_DIR.glob("*.json") if f.name.lower() != "base.json")
 
 print(f"Found {len(files)} model JSON files")
 for f in files:
@@ -60,6 +57,7 @@ if not files:
 # FIND ENRICHMENTS
 # ============================================================
 
+
 def find_enrichments(obj):
     """Recursively find nodes containing enrichment.evaluation."""
 
@@ -68,10 +66,7 @@ def find_enrichments(obj):
     if isinstance(obj, dict):
         enrichment = obj.get("enrichment")
 
-        if (
-            isinstance(enrichment, dict)
-            and isinstance(enrichment.get("evaluation"), dict)
-        ):
+        if isinstance(enrichment, dict) and isinstance(enrichment.get("evaluation"), dict):
             results.append(obj)
 
         for value in obj.values():
@@ -88,6 +83,7 @@ def find_enrichments(obj):
 # FUNCTION TYPE
 # ============================================================
 
+
 def classify_function_type(node):
     """
     Infer a broad function category from the Optima node identifier.
@@ -97,12 +93,7 @@ def classify_function_type(node):
     enough information.
     """
 
-    raw = str(
-        node.get("node_id")
-        or node.get("id")
-        or node.get("name")
-        or ""
-    )
+    raw = str(node.get("node_id") or node.get("id") or node.get("name") or "")
 
     lower = raw.lower()
 
@@ -136,6 +127,7 @@ def classify_function_type(node):
 # ============================================================
 # DEPENDENCY / GRAPH COMPLEXITY
 # ============================================================
+
 
 def get_dependency_count(node, enrichment):
     """
@@ -184,7 +176,6 @@ def classify_graph_complexity(dependency_count):
 records = []
 
 for file in files:
-
     print("-" * 70)
     print(f"Processing: {file.name}")
 
@@ -201,7 +192,6 @@ for file in files:
     print(f"Found {len(nodes)} enriched functions")
 
     for node in nodes:
-
         enrichment = node.get("enrichment", {})
         evaluation = enrichment.get("evaluation", {})
         usage = enrichment.get("usage", {})
@@ -209,12 +199,7 @@ for file in files:
         context = evaluation.get("context_metrics", {})
         completeness = evaluation.get("field_completeness", {})
 
-        node_id = (
-            node.get("node_id")
-            or node.get("id")
-            or node.get("name")
-            or "unknown"
-        )
+        node_id = node.get("node_id") or node.get("id") or node.get("name") or "unknown"
 
         model = enrichment.get("model", "unknown")
 
@@ -226,76 +211,68 @@ for file in files:
         source_chars = context.get("source_characters", 0) or 0
         llvm_chars = context.get("llvm_characters", 0) or 0
 
-        records.append({
-
-            # Identity
-            "model": model,
-            "function": node_id,
-            "file": file.name,
-
-            # Structural information
-            "source_characters": source_chars,
-            "llvm_characters": llvm_chars,
-            "representation_size": source_chars + llvm_chars,
-            "dependency_count": dependency_count,
-
-            # Evaluation
-            "json_valid": evaluation.get("json_valid"),
-            "request_success": evaluation.get("request_success"),
-            "latency_seconds": evaluation.get("latency_seconds"),
-            "retry_count": evaluation.get("retry_count"),
-
-            # Tokens
-            "prompt_tokens": evaluation.get(
-                "input_tokens",
-                usage.get("prompt_tokens"),
-            ),
-            "output_tokens": evaluation.get(
-                "output_tokens",
-                usage.get("completion_tokens"),
-            ),
-            "total_tokens": evaluation.get(
-                "total_tokens",
-                usage.get("total_tokens"),
-            ),
-
-            # Generated information
-            "keyword_count": evaluation.get("keyword_count"),
-            "concept_count": evaluation.get("concept_count"),
-            "summary_length": evaluation.get("summary_length"),
-            "purpose_length": evaluation.get("purpose_length"),
-            "behavior_length": evaluation.get("behavior_length"),
-
-            # Context availability
-            "source_code": context.get("source_code"),
-            "ast": context.get("ast"),
-            "llvm": context.get("llvm"),
-            "cfg": context.get("cfg"),
-            "call_graph": context.get("call_graph"),
-
-            # Completeness
-            "purpose_complete": completeness.get("purpose"),
-            "behavior_complete": completeness.get("behavior"),
-            "summary_complete": completeness.get("summary"),
-            "inputs_complete": completeness.get("inputs"),
-            "outputs_complete": completeness.get("outputs"),
-            "side_effects_complete": completeness.get("side_effects"),
-            "dependencies_complete": completeness.get("dependencies"),
-            "concepts_complete": completeness.get("concepts"),
-            "keywords_complete": completeness.get("keywords"),
-            "algorithm_complete": completeness.get("algorithm"),
-            "complexity_complete": completeness.get("complexity"),
-
-            # Human evaluation
-            "human_accuracy": evaluation.get("human", {}).get("accuracy"),
-            "human_relevance": evaluation.get("human", {}).get("relevance"),
-            "human_faithfulness": evaluation.get("human", {}).get("faithfulness"),
-            "human_usefulness": evaluation.get("human", {}).get("usefulness"),
-
-            # Function category
-            "function_type": classify_function_type(node),
-
-        })
+        records.append(
+            {
+                # Identity
+                "model": model,
+                "function": node_id,
+                "file": file.name,
+                # Structural information
+                "source_characters": source_chars,
+                "llvm_characters": llvm_chars,
+                "representation_size": source_chars + llvm_chars,
+                "dependency_count": dependency_count,
+                # Evaluation
+                "json_valid": evaluation.get("json_valid"),
+                "request_success": evaluation.get("request_success"),
+                "latency_seconds": evaluation.get("latency_seconds"),
+                "retry_count": evaluation.get("retry_count"),
+                # Tokens
+                "prompt_tokens": evaluation.get(
+                    "input_tokens",
+                    usage.get("prompt_tokens"),
+                ),
+                "output_tokens": evaluation.get(
+                    "output_tokens",
+                    usage.get("completion_tokens"),
+                ),
+                "total_tokens": evaluation.get(
+                    "total_tokens",
+                    usage.get("total_tokens"),
+                ),
+                # Generated information
+                "keyword_count": evaluation.get("keyword_count"),
+                "concept_count": evaluation.get("concept_count"),
+                "summary_length": evaluation.get("summary_length"),
+                "purpose_length": evaluation.get("purpose_length"),
+                "behavior_length": evaluation.get("behavior_length"),
+                # Context availability
+                "source_code": context.get("source_code"),
+                "ast": context.get("ast"),
+                "llvm": context.get("llvm"),
+                "cfg": context.get("cfg"),
+                "call_graph": context.get("call_graph"),
+                # Completeness
+                "purpose_complete": completeness.get("purpose"),
+                "behavior_complete": completeness.get("behavior"),
+                "summary_complete": completeness.get("summary"),
+                "inputs_complete": completeness.get("inputs"),
+                "outputs_complete": completeness.get("outputs"),
+                "side_effects_complete": completeness.get("side_effects"),
+                "dependencies_complete": completeness.get("dependencies"),
+                "concepts_complete": completeness.get("concepts"),
+                "keywords_complete": completeness.get("keywords"),
+                "algorithm_complete": completeness.get("algorithm"),
+                "complexity_complete": completeness.get("complexity"),
+                # Human evaluation
+                "human_accuracy": evaluation.get("human", {}).get("accuracy"),
+                "human_relevance": evaluation.get("human", {}).get("relevance"),
+                "human_faithfulness": evaluation.get("human", {}).get("faithfulness"),
+                "human_usefulness": evaluation.get("human", {}).get("usefulness"),
+                # Function category
+                "function_type": classify_function_type(node),
+            }
+        )
 
 
 # ============================================================
@@ -363,6 +340,7 @@ sizes = df["representation_size"]
 q1 = sizes.quantile(1 / 3)
 q2 = sizes.quantile(2 / 3)
 
+
 def classify_complexity(value):
     if pd.isna(value):
         return "Unknown"
@@ -376,14 +354,10 @@ def classify_complexity(value):
     return "Complex"
 
 
-df["complexity_category"] = sizes.apply(
-    classify_complexity
-)
+df["complexity_category"] = sizes.apply(classify_complexity)
 
 df["graph_complexity"] = df["dependency_count"].apply(
-    lambda x: classify_graph_complexity(
-        int(x) if pd.notna(x) else 0
-    )
+    lambda x: classify_graph_complexity(int(x) if pd.notna(x) else 0)
 )
 
 
@@ -406,38 +380,20 @@ print()
 # COMMON AGGREGATION
 # ============================================================
 
+
 def aggregate(group):
 
     result = {
         "functions": group["function"].count(),
-
-        "json_valid_rate":
-            group["json_valid"].mean() * 100,
-
-        "success_rate":
-            group["request_success"].mean() * 100,
-
-        "avg_latency":
-            group["latency_seconds"].mean(),
-
-        "median_latency":
-            group["latency_seconds"].median(),
-
-        "avg_input_tokens":
-            group["prompt_tokens"].mean(),
-
-        "avg_output_tokens":
-            group["output_tokens"].mean(),
-
-        "avg_total_tokens":
-            group["total_tokens"].mean(),
-
-        "avg_keywords":
-            group["keyword_count"].mean(),
-
-        "avg_concepts":
-            group["concept_count"].mean(),
-
+        "json_valid_rate": group["json_valid"].mean() * 100,
+        "success_rate": group["request_success"].mean() * 100,
+        "avg_latency": group["latency_seconds"].mean(),
+        "median_latency": group["latency_seconds"].median(),
+        "avg_input_tokens": group["prompt_tokens"].mean(),
+        "avg_output_tokens": group["output_tokens"].mean(),
+        "avg_total_tokens": group["total_tokens"].mean(),
+        "avg_keywords": group["keyword_count"].mean(),
+        "avg_concepts": group["concept_count"].mean(),
     }
 
     completeness_columns = [
@@ -454,10 +410,7 @@ def aggregate(group):
         "complexity_complete",
     ]
 
-    available = [
-        c for c in completeness_columns
-        if c in group.columns
-    ]
+    available = [c for c in completeness_columns if c in group.columns]
 
     if available:
         values = group[available].apply(
@@ -465,9 +418,7 @@ def aggregate(group):
             errors="coerce",
         )
 
-        result["field_completeness_rate"] = (
-            values.mean(axis=1).mean() * 100
-        )
+        result["field_completeness_rate"] = values.mean(axis=1).mean() * 100
     else:
         result["field_completeness_rate"] = None
 
@@ -478,11 +429,7 @@ def aggregate(group):
 # 1. OVERALL MODEL COMPARISON
 # ============================================================
 
-summary = (
-    df.groupby("model", dropna=False)
-      .apply(aggregate, include_groups=False)
-      .reset_index()
-)
+summary = df.groupby("model", dropna=False).apply(aggregate, include_groups=False).reset_index()
 
 summary = summary.sort_values(
     "field_completeness_rate",
@@ -517,16 +464,9 @@ complexity_order = {
     "Unknown": 3,
 }
 
-complexity_summary["_order"] = (
-    complexity_summary["complexity_category"]
-    .map(complexity_order)
-)
+complexity_summary["_order"] = complexity_summary["complexity_category"].map(complexity_order)
 
-complexity_summary = (
-    complexity_summary
-    .sort_values(["_order", "model"])
-    .drop(columns="_order")
-)
+complexity_summary = complexity_summary.sort_values(["_order", "model"]).drop(columns="_order")
 
 complexity_csv = REPORT_DIR / "model_by_complexity.csv"
 
@@ -577,16 +517,9 @@ graph_order = {
     "High": 3,
 }
 
-graph_summary["_order"] = (
-    graph_summary["graph_complexity"]
-    .map(graph_order)
-)
+graph_summary["_order"] = graph_summary["graph_complexity"].map(graph_order)
 
-graph_summary = (
-    graph_summary
-    .sort_values(["_order", "model"])
-    .drop(columns="_order")
-)
+graph_summary = graph_summary.sort_values(["_order", "model"]).drop(columns="_order")
 
 graph_csv = REPORT_DIR / "model_by_graph_complexity.csv"
 
@@ -602,36 +535,29 @@ graph_summary.to_csv(
 
 print("OVERALL MODEL COMPARISON")
 print("=" * 70)
-print(
-    summary.to_string(index=False)
-)
+print(summary.to_string(index=False))
 print()
 
 print("MODEL × COMPLEXITY")
 print("=" * 70)
-print(
-    complexity_summary.to_string(index=False)
-)
+print(complexity_summary.to_string(index=False))
 print()
 
 print("MODEL × FUNCTION TYPE")
 print("=" * 70)
-print(
-    function_type_summary.to_string(index=False)
-)
+print(function_type_summary.to_string(index=False))
 print()
 
 print("MODEL × GRAPH COMPLEXITY")
 print("=" * 70)
-print(
-    graph_summary.to_string(index=False)
-)
+print(graph_summary.to_string(index=False))
 print()
 
 
 # ============================================================
 # GRAPH HELPERS
 # ============================================================
+
 
 def grouped_bar(
     data,
@@ -649,9 +575,7 @@ def grouped_bar(
     if category_column not in data.columns:
         return
 
-    plot = data[
-        [category_column, "model", metric]
-    ].dropna()
+    plot = data[[category_column, "model", metric]].dropna()
 
     if plot.empty:
         return
@@ -767,9 +691,7 @@ grouped_bar(
 # FUNCTION TYPE GRAPHS
 # ============================================================
 
-function_types = sorted(
-    df["function_type"].dropna().unique()
-)
+function_types = sorted(df["function_type"].dropna().unique())
 
 grouped_bar(
     function_type_summary,
@@ -834,7 +756,6 @@ with pd.ExcelWriter(
     excel_path,
     engine="openpyxl",
 ) as writer:
-
     summary.to_excel(
         writer,
         sheet_name="Model Comparison",
@@ -876,20 +797,13 @@ with report_path.open(
     "w",
     encoding="utf-8",
 ) as f:
-
     f.write("# Optima Model Enrichment Report\n\n")
 
-    f.write(
-        f"- Functions analyzed: **{len(df)}**\n"
-    )
+    f.write(f"- Functions analyzed: **{len(df)}**\n")
 
-    f.write(
-        f"- Models analyzed: **{df['model'].nunique()}**\n"
-    )
+    f.write(f"- Models analyzed: **{df['model'].nunique()}**\n")
 
-    f.write(
-        f"- Models: {', '.join(df['model'].dropna().unique())}\n\n"
-    )
+    f.write(f"- Models: {', '.join(df['model'].dropna().unique())}\n\n")
 
     f.write("## Overall Model Comparison\n\n")
     f.write(summary.to_markdown(index=False))

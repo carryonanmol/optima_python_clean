@@ -12,7 +12,7 @@ import math
 import re
 import unicodedata
 from collections import Counter, defaultdict
-from typing import Dict, Iterable, List, Sequence, Tuple
+from collections.abc import Iterable, Sequence
 
 _WORD = re.compile(r"[A-Za-z0-9_]+")
 _CAMEL = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
@@ -29,14 +29,14 @@ def normalize_query(query: object) -> str:
     return " ".join(text.split())
 
 
-def tokenize(text: str) -> List[str]:
+def tokenize(text: str) -> list[str]:
     """Lower-cased tokens; identifiers yield the whole token plus sub-words.
 
     ``cJSON_ParseWithOpts`` -> ``cjson_parsewithopts, cjson, parse, with, opts``.
     Sub-words make natural-language queries match identifiers while the whole
     token keeps exact-identifier matches precise.
     """
-    tokens: List[str] = []
+    tokens: list[str] = []
     for word in _WORD.findall(text or ""):
         whole = word.lower().strip("_")
         if len(whole) < 2 and not whole.isdigit():
@@ -46,7 +46,7 @@ def tokenize(text: str) -> List[str]:
         pieces = []
         for chunk in chunks:
             if len(chunks) > 1:
-                pieces.append(chunk.lower())      # snake_case part, e.g. "cjson"
+                pieces.append(chunk.lower())  # snake_case part, e.g. "cjson"
             pieces.extend(p.lower() for p in _CAMEL.findall(chunk))
         pieces = [p for p in dict.fromkeys(pieces) if p != whole]
         tokens.extend(p for p in pieces if len(p) >= 2 or p.isdigit())
@@ -58,17 +58,17 @@ class BM25Index:
 
     def __init__(self, k1: float = 1.5, b: float = 0.75):
         self.k1, self.b = k1, b
-        self.ids: List[str] = []
-        self._postings: Dict[str, List[Tuple[int, int]]] = {}
-        self._doc_len: List[int] = []
+        self.ids: list[str] = []
+        self._postings: dict[str, list[tuple[int, int]]] = {}
+        self._doc_len: list[int] = []
         self._avg_len = 0.0
-        self._idf: Dict[str, float] = {}
+        self._idf: dict[str, float] = {}
 
-    def build(self, ids: Sequence[str], texts: Sequence[str]) -> "BM25Index":
+    def build(self, ids: Sequence[str], texts: Sequence[str]) -> BM25Index:
         if len(ids) != len(texts):
             raise ValueError("ids and texts must have the same length")
-        postings: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
-        doc_len: List[int] = []
+        postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
+        doc_len: list[int] = []
         for position, text in enumerate(texts):
             counts = Counter(tokenize(text))
             doc_len.append(sum(counts.values()))
@@ -88,28 +88,34 @@ class BM25Index:
     def __len__(self) -> int:
         return len(self.ids)
 
-    def search(self, query: str, k: int) -> List[Tuple[str, float]]:
+    def search(self, query: str, k: int) -> list[tuple[str, float]]:
         """Top-``k`` ``(id, score)`` with score > 0, ties broken by index order."""
         terms = list(dict.fromkeys(tokenize(normalize_query(query))))
         if not terms or not self.ids or k < 1:
             return []
-        scores: Dict[int, float] = defaultdict(float)
+        scores: dict[int, float] = defaultdict(float)
         for term in terms:
             plist = self._postings.get(term)
             if not plist:
                 continue
             idf = self._idf[term]
             for position, freq in plist:
-                norm = 1.0 - self.b + self.b * (self._doc_len[position] / self._avg_len
-                                                if self._avg_len else 1.0)
+                norm = (
+                    1.0
+                    - self.b
+                    + self.b * (self._doc_len[position] / self._avg_len if self._avg_len else 1.0)
+                )
                 scores[position] += idf * freq * (self.k1 + 1.0) / (freq + self.k1 * norm)
         ranked = sorted(scores.items(), key=lambda item: (-round(item[1], 12), item[0]))
         return [(self.ids[position], score) for position, score in ranked[:k]]
 
     def approx_size_bytes(self) -> int:
         """Rough in-memory footprint of the postings (16 bytes per posting)."""
-        return sum(len(p) for p in self._postings.values()) * 16 + sum(
-            len(t) for t in self._postings) + 8 * len(self._doc_len)
+        return (
+            sum(len(p) for p in self._postings.values()) * 16
+            + sum(len(t) for t in self._postings)
+            + 8 * len(self._doc_len)
+        )
 
 
 class ExactSymbolMatcher:
@@ -122,12 +128,12 @@ class ExactSymbolMatcher:
     Match strength: qualified-name (3) > name (2) > case-insensitive name (1).
     """
 
-    def __init__(self, entries: Iterable[Tuple[str, str, str]]):
+    def __init__(self, entries: Iterable[tuple[str, str, str]]):
         """``entries`` are ``(id, name, qualified_name)`` in corpus order."""
-        self._order: Dict[str, int] = {}
-        self._by_qualified: Dict[str, List[str]] = defaultdict(list)
-        self._by_name: Dict[str, List[str]] = defaultdict(list)
-        self._by_name_ci: Dict[str, List[str]] = defaultdict(list)
+        self._order: dict[str, int] = {}
+        self._by_qualified: dict[str, list[str]] = defaultdict(list)
+        self._by_name: dict[str, list[str]] = defaultdict(list)
+        self._by_name_ci: dict[str, list[str]] = defaultdict(list)
         for position, (ident, name, qualified) in enumerate(entries):
             self._order[ident] = position
             if qualified:
@@ -137,20 +143,25 @@ class ExactSymbolMatcher:
                 self._by_name_ci[name.lower()].append(ident)
 
     @staticmethod
-    def symbols_in(query: str) -> List[str]:
+    def symbols_in(query: str) -> list[str]:
         text = normalize_query(query)
-        found: List[str] = []
+        found: list[str] = []
         found.extend(match.group(1) for match in _QUOTED.finditer(text))
         found.extend(match.group(1) for match in _CALL_FORM.finditer(text))
         for match in _IDENT.finditer(text):
             token = match.group(0)
-            if (("_" in token.strip("_")) or "::" in token or any(c.isdigit() for c in token)
-                    or re.search(r"[a-z][A-Z]", token) or re.search(r"[A-Z]{2,}", token)):
+            if (
+                ("_" in token.strip("_"))
+                or "::" in token
+                or any(c.isdigit() for c in token)
+                or re.search(r"[a-z][A-Z]", token)
+                or re.search(r"[A-Z]{2,}", token)
+            ):
                 found.append(token)
         return list(dict.fromkeys(found))
 
-    def search(self, query: str, k: int) -> List[Tuple[str, float]]:
-        best: Dict[str, float] = {}
+    def search(self, query: str, k: int) -> list[tuple[str, float]]:
+        best: dict[str, float] = {}
         for symbol in self.symbols_in(query):
             for ident in self._by_qualified.get(symbol, ()):
                 best[ident] = max(best.get(ident, 0.0), 3.0)

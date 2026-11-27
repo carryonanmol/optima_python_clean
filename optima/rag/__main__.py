@@ -7,20 +7,20 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 # Use the simple embedding module that has fallback to mock embeddings
-from .embedding_simple import embed_all_corpora, get_embedding_registry, embedding_alias
+from .embedding_simple import embed_all_corpora, get_embedding_registry
 from .evaluation import (
     create_benchmark_from_json_files,
-    save_benchmark_queries,
     load_benchmark_queries,
-    OptimaRetrievalEvaluator
+    save_benchmark_queries,
 )
-from .rag_pipeline import rag_query
 
 # Try to import LLM for RAG pipeline
 try:
     from langchain_community.llms import HuggingFacePipeline
+
     LLM_AVAILABLE = True
 except ImportError:
     LLM_AVAILABLE = False
@@ -38,16 +38,14 @@ def setup_logging(level: str = "INFO"):
     """Setup logging configuration."""
     logging.basicConfig(
         level=getattr(logging, level.upper()),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout)
-        ]
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
     )
 
 
 def cmd_embed_all(args):
     """Handle the embed-all command."""
-    logging.info(f"Starting embedding process for all corpora")
+    logging.info("Starting embedding process for all corpora")
     requested_models = _model_list(getattr(args, "embedding_models", None))
     if getattr(args, "all_embedding_models", False):
         requested_models = list(get_embedding_registry().keys())
@@ -73,21 +71,22 @@ def cmd_embed_all(args):
         results_file = output_dir / "rag_report" / "embedding_results.json"
         results_file.parent.mkdir(parents=True, exist_ok=True)
         import json
-        with open(results_file, 'w') as f:
+
+        with open(results_file, "w") as f:
             json.dump(results, f, indent=2)
 
         logging.info(f"Embedding completed. Results saved to {results_file}")
 
         # Print summary
         summary = results.get("summary", {})
-        print(f"\nEmbedding Summary:")
+        print("\nEmbedding Summary:")
         print(f"  Embedding models: {summary.get('total_embedding_models', len(requested_models))}")
         print(f"  Total corpora: {summary.get('total_corpora', 0)}")
         print(f"  Successful: {summary.get('successful', summary.get('successful_corpora', 0))}")
         print(f"  Failed: {summary.get('failed', summary.get('failed_corpora', 0))}")
         print(f"  Total time: {summary.get('total_elapsed_time_seconds', 0)}s")
 
-        if summary.get('failed_corpora', 0) > 0:
+        if summary.get("failed_corpora", 0) > 0:
             print("\nFailed corpora:")
             for alias, corpora in results.get("embeddings", {}).items():
                 for name, result in corpora.items():
@@ -117,7 +116,7 @@ def cmd_evaluate(args):
         )
         return
 
-    logging.info(f"Starting evaluation process")
+    logging.info("Starting evaluation process")
     requested_models = _model_list(getattr(args, "embedding_models", None))
     if getattr(args, "all_embedding_models", False):
         requested_models = list(get_embedding_registry().keys())
@@ -132,28 +131,36 @@ def cmd_evaluate(args):
 
     try:
         # Load or create benchmark
-        benchmark_path = Path(args.benchmark) if args.benchmark else rag_report_dir / "benchmark" / "queries.json"
+        benchmark_path = (
+            Path(args.benchmark)
+            if args.benchmark
+            else rag_report_dir / "benchmark" / "queries.json"
+        )
 
         if args.create_benchmark or not benchmark_path.exists():
             logging.info("Creating benchmark queries...")
             # Handle backward compatibility: if num_queries_per_category is specified, use it
             # Otherwise, use num_queries for backward compatibility
-            if hasattr(args, 'num_queries_per_category') and args.num_queries_per_category is not None:
+            if (
+                hasattr(args, "num_queries_per_category")
+                and args.num_queries_per_category is not None
+            ):
                 # Calculate total queries: num_queries_per_category * 8 categories
                 num_queries = args.num_queries_per_category * 8
-                logging.info(f"Creating benchmark with {args.num_queries_per_category} queries per category (8 categories) = {num_queries} total queries")
+                logging.info(
+                    f"Creating benchmark with {args.num_queries_per_category} queries per category (8 categories) = {num_queries} total queries"
+                )
             else:
                 num_queries = args.num_queries
-                logging.info(f"Creating benchmark with {num_queries} total queries (backward compatibility)")
+                logging.info(
+                    f"Creating benchmark with {num_queries} total queries (backward compatibility)"
+                )
 
             # Use seed from args if available, otherwise default to 42
-            seed = getattr(args, 'seed', 42)
+            seed = getattr(args, "seed", 42)
 
             queries = create_benchmark_from_json_files(
-                output_dir,
-                num_queries,
-                difficulty_distribution=(0.25, 0.35, 0.40),
-                seed=seed
+                output_dir, num_queries, difficulty_distribution=(0.25, 0.35, 0.40), seed=seed
             )
             save_benchmark_queries(queries, benchmark_path)
             logging.info(f"Benchmark saved to {benchmark_path}")
@@ -170,24 +177,34 @@ def cmd_evaluate(args):
         print(f"Query embedding models: {', '.join(requested_models)}")
         logging.info(f"Evaluating {len(queries)} queries with k={args.k}")
         from .evaluation import (
-            evaluate_embedding_matrix, save_matrix_csv, save_group_metrics_csv,
-            save_gain_csv, save_best_tables, generate_visualizations,
+            evaluate_embedding_matrix,
+            generate_visualizations,
+            save_best_tables,
+            save_gain_csv,
+            save_group_metrics_csv,
+            save_matrix_csv,
         )
+
         results_matrix = evaluate_embedding_matrix(
-            rag_report_dir, requested_models, queries, args.k,
+            rag_report_dir,
+            requested_models,
+            queries,
+            args.k,
             corpora=_model_list(getattr(args, "corpora", None)),
             enrichment_models=_model_list(getattr(args, "enrichment_models", None)),
             difficulty=getattr(args, "difficulty", None),
             categories=_model_list(getattr(args, "categories", None)),
-            debug=args.debug, debug_limit=args.debug_limit,
+            debug=args.debug,
+            debug_limit=args.debug_limit,
         )
         if not any(results_matrix.values()):
             logging.error("No vector indices found for selected embedding model(s)")
             logging.info("Run 'python -m optima.rag embed-all' first to create indices")
             sys.exit(1)
         # Keep the historical flat JSON shape for a single selected model.
-        results = (next(iter(results_matrix.values()))
-                   if len(results_matrix) == 1 else results_matrix)
+        results = (
+            next(iter(results_matrix.values())) if len(results_matrix) == 1 else results_matrix
+        )
 
         # Save results
         results_dir = rag_report_dir / "results"
@@ -203,13 +220,13 @@ def cmd_evaluate(args):
             "embedding_models": requested_models,
             "benchmark_queries": len(queries),
             "k_value": args.k,
-            "corpora_evaluated": sorted({
-                corpus for corpora in results_matrix.values() for corpus in corpora
-            }),
+            "corpora_evaluated": sorted(
+                {corpus for corpora in results_matrix.values() for corpus in corpora}
+            ),
             "results": results,
-            "evaluation_timestamp": timestamp
+            "evaluation_timestamp": timestamp,
         }
-        with open(detailed_results_file, 'w') as f:
+        with open(detailed_results_file, "w") as f:
             json.dump(detailed_results, f, indent=2)
 
         # Save CSV summary
@@ -217,17 +234,23 @@ def cmd_evaluate(args):
         save_matrix_csv(results_matrix, csv_file)
         save_matrix_csv(results_matrix, results_dir / "aggregate_metrics.csv")
         from .evaluation import save_per_query_results
+
         save_per_query_results(results_matrix, rag_report_dir / "per_query_results.csv")
         save_group_metrics_csv(results_matrix, results_dir / "difficulty_metrics.csv", "difficulty")
         save_group_metrics_csv(results_matrix, results_dir / "category_metrics.csv", "category")
         save_matrix_csv(results_matrix, results_dir / "embedding_comparison.csv")
-        save_group_metrics_csv(results_matrix, results_dir / "embedding_by_difficulty.csv", "difficulty")
-        save_group_metrics_csv(results_matrix, results_dir / "embedding_by_category.csv", "category")
+        save_group_metrics_csv(
+            results_matrix, results_dir / "embedding_by_difficulty.csv", "difficulty"
+        )
+        save_group_metrics_csv(
+            results_matrix, results_dir / "embedding_by_category.csv", "category"
+        )
         save_gain_csv(results_matrix, results_dir / "enrichment_gains.csv", "enrichment")
         if len(results_matrix) > 1:
             save_gain_csv(results_matrix, results_dir / "embedding_gains.csv", "embedding")
         save_best_tables(results_matrix, results_dir / "best_tables.csv")
         from .evaluation import save_best_combinations
+
         save_best_combinations(results_matrix, results_dir)
         generate_visualizations(results_matrix, results_dir / "plots")
 
@@ -239,6 +262,7 @@ def cmd_evaluate(args):
             except Exception as e:
                 logging.error(f"Failed to save improvement CSV: {e}")
                 import traceback
+
                 logging.debug(traceback.format_exc())
 
         # Generate rankings
@@ -248,6 +272,7 @@ def cmd_evaluate(args):
         except Exception as e:
             logging.error(f"Failed to save ranking CSV: {e}")
             import traceback
+
             logging.debug(traceback.format_exc())
 
         logging.info(f"Evaluation completed. Results saved to {results_dir}")
@@ -258,13 +283,14 @@ def cmd_evaluate(args):
     except Exception as e:
         logging.error(f"Evaluation process failed: {e}")
         import traceback
+
         logging.error(traceback.format_exc())  # Changed from debug to error to ensure it's visible
         sys.exit(1)
 
 
 def cmd_retrieve(args):
     """Handle the retrieve command."""
-    logging.info(f"Starting retrieval query")
+    logging.info("Starting retrieval query")
     logging.info(f"Embedding model: {args.embedding_model}")
     logging.info(f"Query: {args.query}")
 
@@ -289,17 +315,19 @@ def cmd_retrieve(args):
 
         # Check if index exists
         from .embedding_simple import index_directory
+
         index_path = index_directory(rag_report_dir, corpus_name, args.embedding_model)
         if not index_path.exists():
             # load_corpus_indices also handles historical indexes; locate the
             # requested corpus before reporting it as missing.
             from .evaluation import load_corpus_indices
+
             legacy = load_corpus_indices(rag_report_dir, args.embedding_model)
             if corpus_name in legacy:
                 index_path = Path(legacy[corpus_name]._optima_index_path)
         if not index_path.exists():
             logging.error(f"Vector index not found: {index_path}")
-            logging.info(f"Run 'python -m optima.rag embed-all' first to create indices")
+            logging.info("Run 'python -m optima.rag embed-all' first to create indices")
             sys.exit(1)
 
         # Setup LLM if RAG mode requested
@@ -317,15 +345,18 @@ def cmd_retrieve(args):
                         model_kwargs={
                             "temperature": 0.7,
                             "max_length": 512,
-                        }
+                        },
                     )
                     logging.info("LLM loaded for RAG pipeline")
                 except Exception as e:
-                    logging.warning(f"Could not load LLM: {e}. Falling back to retrieval-only mode.")
+                    logging.warning(
+                        f"Could not load LLM: {e}. Falling back to retrieval-only mode."
+                    )
 
         # Perform retrieval or RAG
         if args.rag_mode and llm:
             from .rag_pipeline import rag_query
+
             result = rag_query(
                 corpus_name=corpus_name,
                 embedding_model_name=args.embedding_model,
@@ -341,16 +372,15 @@ def cmd_retrieve(args):
             print(f"Response time: {result['response_time_seconds']}s")
 
             if args.verbose:
-                print(f"\nSource documents:")
-                for i, doc in enumerate(result['source_documents']):
-                    print(f"  {i+1}. {doc.metadata.get('function_name', 'unknown')} "
-                          f"(score: N/A)")
+                print("\nSource documents:")
+                for i, doc in enumerate(result["source_documents"]):
+                    print(f"  {i + 1}. {doc.metadata.get('function_name', 'unknown')} (score: N/A)")
                     if args.verbose > 1:  # Show content
                         print(f"     Content: {doc.page_content[:200]}...")
         else:
             # Pure retrieval mode
+
             from .embedding_simple import OptimaEmbedder
-            from langchain_community.vectorstores import FAISS
 
             embedder = OptimaEmbedder(embedding_model_name=args.embedding_model)
             vector_store = embedder.load_vector_index(index_path)
@@ -360,7 +390,7 @@ def cmd_retrieve(args):
                 sys.exit(1)
 
             retriever = vector_store.as_retriever(search_kwargs={"k": args.k})
-            if hasattr(retriever, 'get_relevant_documents'):
+            if hasattr(retriever, "get_relevant_documents"):
                 docs = retriever.get_relevant_documents(args.query)
             else:
                 docs = retriever.invoke(args.query)
@@ -368,13 +398,13 @@ def cmd_retrieve(args):
             print(f"\nQuery: {args.query}")
             print(f"Retrieved {len(docs)} documents:")
             for i, doc in enumerate(docs):
-                func_name = doc.metadata.get('function_name', 'unknown')
-                qualified_name = doc.metadata.get('qualified_name', '')
-                file_name = doc.metadata.get('file_name', '')
-                corpus_type = doc.metadata.get('corpus_type', '')
-                enrichment_model = doc.metadata.get('enrichment_model', 'none')
+                func_name = doc.metadata.get("function_name", "unknown")
+                qualified_name = doc.metadata.get("qualified_name", "")
+                file_name = doc.metadata.get("file_name", "")
+                corpus_type = doc.metadata.get("corpus_type", "")
+                enrichment_model = doc.metadata.get("enrichment_model", "none")
 
-                print(f"  {i+1}. {func_name}")
+                print(f"  {i + 1}. {func_name}")
                 if qualified_name and qualified_name != func_name:
                     print(f"      Qualified: {qualified_name}")
                 print(f"      File: {file_name}")
@@ -386,11 +416,12 @@ def cmd_retrieve(args):
     except Exception as e:
         logging.error(f"Retrieval process failed: {e}")
         import traceback
+
         logging.debug(traceback.format_exc())
         sys.exit(1)
 
 
-def save_results_as_csv(results: Dict[str, Dict[str, Any]], output_path: Path):
+def save_results_as_csv(results: dict[str, dict[str, Any]], output_path: Path):
     """Save evaluation results as CSV."""
     import csv
 
@@ -398,27 +429,41 @@ def save_results_as_csv(results: Dict[str, Dict[str, Any]], output_path: Path):
 
     # Define columns
     columns = [
-        'corpus', 'recall_at_1', 'recall_at_3', 'recall_at_5', 'recall_at_10',
-        'precision_at_1', 'precision_at_3', 'precision_at_5', 'precision_at_10',
-        'hit_rate_at_1', 'hit_rate_at_3', 'hit_rate_at_5', 'hit_rate_at_10',
-        'mrr', 'mean_latency', 'median_latency', 'queries_evaluated'
+        "corpus",
+        "recall_at_1",
+        "recall_at_3",
+        "recall_at_5",
+        "recall_at_10",
+        "precision_at_1",
+        "precision_at_3",
+        "precision_at_5",
+        "precision_at_10",
+        "hit_rate_at_1",
+        "hit_rate_at_3",
+        "hit_rate_at_5",
+        "hit_rate_at_10",
+        "mrr",
+        "mean_latency",
+        "median_latency",
+        "queries_evaluated",
     ]
 
-    with open(output_path, 'w', newline='') as csvfile:
+    with open(output_path, "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=columns)
         writer.writeheader()
 
         for corpus_name, metrics in results.items():
-            if isinstance(metrics, dict) and 'error' not in metrics:
-                row = {'corpus': corpus_name}
+            if isinstance(metrics, dict) and "error" not in metrics:
+                row = {"corpus": corpus_name}
                 for col in columns[1:]:  # Skip 'corpus'
                     row[col] = metrics.get(col, 0.0)
                 writer.writerow(row)
 
 
-def save_improvement_csv(results: Dict[str, Dict[str, Any]], baseline_name: str, output_path: Path):
+def save_improvement_csv(results: dict[str, dict[str, Any]], baseline_name: str, output_path: Path):
     """Save improvement over baseline as CSV."""
     import csv
+
     from .evaluation import calculate_improvement_over_baseline
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -432,23 +477,36 @@ def save_improvement_csv(results: Dict[str, Dict[str, Any]], baseline_name: str,
 
     # Define columns
     columns = [
-        'model', 'metric', 'raw_value', 'model_value',
-        'absolute_improvement', 'relative_improvement_percent'
+        "model",
+        "metric",
+        "raw_value",
+        "model_value",
+        "absolute_improvement",
+        "relative_improvement_percent",
     ]
 
     metrics_to_compare = [
-        'recall_at_1', 'recall_at_3', 'recall_at_5', 'recall_at_10',
-        'precision_at_1', 'precision_at_3', 'precision_at_5', 'precision_at_10',
-        'hit_rate_at_1', 'hit_rate_at_3', 'hit_rate_at_5', 'hit_rate_at_10',
-        'mrr'
+        "recall_at_1",
+        "recall_at_3",
+        "recall_at_5",
+        "recall_at_10",
+        "precision_at_1",
+        "precision_at_3",
+        "precision_at_5",
+        "precision_at_10",
+        "hit_rate_at_1",
+        "hit_rate_at_3",
+        "hit_rate_at_5",
+        "hit_rate_at_10",
+        "mrr",
     ]
 
-    with open(output_path, 'w', newline='') as csvfile:
+    with open(output_path, "w", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=columns)
         writer.writeheader()
 
         for model_name, metrics in results.items():
-            if model_name == baseline_name or not isinstance(metrics, dict) or 'error' in metrics:
+            if model_name == baseline_name or not isinstance(metrics, dict) or "error" in metrics:
                 continue
 
             logging.info(f"Processing model: {model_name}")
@@ -460,34 +518,39 @@ def save_improvement_csv(results: Dict[str, Dict[str, Any]], baseline_name: str,
             for metric in metrics_to_compare:
                 raw_val = baseline_metrics.get(metric, 0.0)
                 model_val = metrics.get(metric, 0.0)
-                abs_imp = improvements.get(f'{metric}_absolute', 0.0)
-                rel_imp = improvements.get(f'{metric}_relative_percent', 0.0)
+                abs_imp = improvements.get(f"{metric}_absolute", 0.0)
+                rel_imp = improvements.get(f"{metric}_relative_percent", 0.0)
 
-                logging.info(f"Metric {metric}: raw={raw_val} ({type(raw_val)}), model={model_val} ({type(model_val)}), abs={abs_imp} ({type(abs_imp)}), rel={rel_imp} ({type(rel_imp)})")
+                logging.info(
+                    f"Metric {metric}: raw={raw_val} ({type(raw_val)}), model={model_val} ({type(model_val)}), abs={abs_imp} ({type(abs_imp)}), rel={rel_imp} ({type(rel_imp)})"
+                )
 
-                writer.writerow({
-                    'model': model_name,
-                    'metric': metric,
-                    'raw_value': raw_val,
-                    'model_value': model_val,
-                    'absolute_improvement': abs_imp,
-                    'relative_improvement_percent': rel_imp
-                })
+                writer.writerow(
+                    {
+                        "model": model_name,
+                        "metric": metric,
+                        "raw_value": raw_val,
+                        "model_value": model_val,
+                        "absolute_improvement": abs_imp,
+                        "relative_improvement_percent": rel_imp,
+                    }
+                )
 
 
-def save_ranking_csv(results: Dict[str, Dict[str, Any]], output_path: Path):
+def save_ranking_csv(results: dict[str, dict[str, Any]], output_path: Path):
     """Save model rankings as CSV."""
     import csv
+
     from .evaluation import rank_enrichment_models
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Rank by different metrics
-    metrics_to_rank = ['recall_at_5', 'mrr', 'hit_rate_at_5']
+    metrics_to_rank = ["recall_at_5", "mrr", "hit_rate_at_5"]
 
-    with open(output_path, 'w', newline='') as csvfile:
+    with open(output_path, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(['Rank', 'Model', 'Metric', 'Value'])
+        writer.writerow(["Rank", "Model", "Metric", "Value"])
 
         for metric in metrics_to_rank:
             rankings = rank_enrichment_models(results, metric)
@@ -495,12 +558,11 @@ def save_ranking_csv(results: Dict[str, Dict[str, Any]], output_path: Path):
                 writer.writerow([rank, model_name, metric, f"{value:.4f}"])
 
 
-def print_evaluation_summary(results: Dict[str, Dict[str, Any]]):
+def print_evaluation_summary(results: dict[str, dict[str, Any]]):
     """Print evaluation results in a formatted table."""
     # Matrix evaluations are printed one row per embedding/corpus pair.
     if results and not any(
-        isinstance(value, dict) and "per_query_results" in value
-        for value in results.values()
+        isinstance(value, dict) and "per_query_results" in value for value in results.values()
     ):
         print("\n" + "=" * 80)
         print("RETRIEVAL EVALUATION MATRIX")
@@ -510,15 +572,17 @@ def print_evaluation_summary(results: Dict[str, Dict[str, Any]]):
             for corpus, metrics in corpora.items():
                 if not isinstance(metrics, dict) or "error" in metrics:
                     continue
-                print(f"{embedding:<18} {corpus:<28} "
-                      f"{metrics.get('recall_at_5', 0.0):<8.3f} "
-                      f"{metrics.get('mrr', 0.0):<8.3f} "
-                      f"{metrics.get('weighted_overall_score', 0.0):<8.3f}")
+                print(
+                    f"{embedding:<18} {corpus:<28} "
+                    f"{metrics.get('recall_at_5', 0.0):<8.3f} "
+                    f"{metrics.get('mrr', 0.0):<8.3f} "
+                    f"{metrics.get('weighted_overall_score', 0.0):<8.3f}"
+                )
         print("=" * 80)
         return
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("RETRIEVAL EVALUATION RESULTS")
-    print("="*80)
+    print("=" * 80)
 
     # Header
     header = f"{'Model':<25} {'R@1':<8} {'R@5':<8} {'R@10':<8} {'MRR':<8} {'Hit@5':<8} {'Latency(s)':<10}"
@@ -527,21 +591,21 @@ def print_evaluation_summary(results: Dict[str, Dict[str, Any]]):
 
     # Sort models: raw first, then alphabetically
     model_order = []
-    if 'raw' in results:
-        model_order.append('raw')
-    model_order.extend(sorted([k for k in results.keys() if k != 'raw']))
+    if "raw" in results:
+        model_order.append("raw")
+    model_order.extend(sorted([k for k in results.keys() if k != "raw"]))
 
     for model_name in model_order:
         metrics = results.get(model_name, {})
-        if not isinstance(metrics, dict) or 'error' in metrics:
+        if not isinstance(metrics, dict) or "error" in metrics:
             continue
 
-        r1 = metrics.get('recall_at_1', 0.0)
-        r5 = metrics.get('recall_at_5', 0.0)
-        r10 = metrics.get('recall_at_10', 0.0)
-        mrr = metrics.get('mrr', 0.0)
-        hit5 = metrics.get('hit_rate_at_5', 0.0)
-        latency = metrics.get('mean_latency', 0.0)
+        r1 = metrics.get("recall_at_1", 0.0)
+        r5 = metrics.get("recall_at_5", 0.0)
+        r10 = metrics.get("recall_at_10", 0.0)
+        mrr = metrics.get("mrr", 0.0)
+        hit5 = metrics.get("hit_rate_at_5", 0.0)
+        latency = metrics.get("mean_latency", 0.0)
 
         # Highlight best values
         def format_val(val, is_best=False):
@@ -550,11 +614,13 @@ def print_evaluation_summary(results: Dict[str, Dict[str, Any]]):
                 return f"***{s}***"
             return s
 
-        print(f"{model_name:<25} {format_val(r1):<8} {format_val(r5):<8} "
-              f"{format_val(r10):<8} {format_val(mrr):<8} {format_val(hit5):<8} "
-              f"{latency:<10.3f}")
+        print(
+            f"{model_name:<25} {format_val(r1):<8} {format_val(r5):<8} "
+            f"{format_val(r10):<8} {format_val(mrr):<8} {format_val(hit5):<8} "
+            f"{latency:<10.3f}"
+        )
 
-    print("="*80)
+    print("=" * 80)
 
 
 def main():
@@ -563,149 +629,133 @@ def main():
         description="Optima RAG System - Embedding, Retrieval, and Evaluation"
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="count",
         default=0,
-        help="Increase verbosity (can be used multiple times)"
+        help="Increase verbosity (can be used multiple times)",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # embed-all command
     embed_parser = subparsers.add_parser(
-        "embed-all",
-        help="Embed all JSON corpora and create vector indices"
+        "embed-all", help="Embed all JSON corpora and create vector indices"
     )
     embed_parser.add_argument(
         "--embedding-model",
         default="bge-small",
-        help="Embedding alias or HuggingFace model name to use"
+        help="Embedding alias or HuggingFace model name to use",
     )
     embed_parser.add_argument(
-        "--embedding-models", nargs="+",
-        help="Embed with several aliases (space or comma separated)"
+        "--embedding-models",
+        nargs="+",
+        help="Embed with several aliases (space or comma separated)",
     )
     embed_parser.add_argument(
-        "--all-embedding-models", action="store_true",
-        help="Embed with every registered embedding alias"
+        "--all-embedding-models",
+        action="store_true",
+        help="Embed with every registered embedding alias",
     )
     embed_parser.add_argument(
-        "--force", action="store_true",
-        help="Rebuild existing canonical indexes"
+        "--force", action="store_true", help="Rebuild existing canonical indexes"
     )
     embed_parser.add_argument(
         "--representation-mode",
         choices=["raw", "enriched", "semantic", "compiler", "hybrid"],
         default="hybrid",
-        help="Document representation mode"
+        help="Document representation mode",
     )
     embed_parser.add_argument(
-        "--output-dir", "-o",
+        "--output-dir",
+        "-o",
         default="/home/igorr/Projects/op-python/optima/output",
-        help="Directory containing Optima JSON output files"
+        help="Directory containing Optima JSON output files",
     )
     embed_parser.set_defaults(func=cmd_embed_all)
 
     # evaluate command
     eval_parser = subparsers.add_parser(
-        "evaluate",
-        help="Evaluate retrieval performance across corpora"
+        "evaluate", help="Evaluate retrieval performance across corpora"
     )
     eval_parser.add_argument(
         "--embedding-model",
         default="bge-small",
-        help="Embedding alias or HuggingFace model name used for indices"
+        help="Embedding alias or HuggingFace model name used for indices",
     )
-    eval_parser.add_argument("--embedding-models", nargs="+",
-                             help="Evaluate several embedding aliases")
-    eval_parser.add_argument("--all-embedding-models", action="store_true",
-                             help="Evaluate every registered embedding alias")
-    eval_parser.add_argument("--corpora", nargs="+",
-                             help="Only evaluate these corpus names")
-    eval_parser.add_argument("--enrichment-models", nargs="+",
-                             help="Only evaluate these enrichment corpus names")
-    eval_parser.add_argument("--difficulty", choices=["easy", "moderate", "difficult"],
-                             help="Filter benchmark queries by difficulty")
-    eval_parser.add_argument("--categories", nargs="+",
-                             help="Filter benchmark queries by category")
     eval_parser.add_argument(
-        "--benchmark",
-        help="Path to benchmark queries JSON file (optional)"
+        "--embedding-models", nargs="+", help="Evaluate several embedding aliases"
     )
+    eval_parser.add_argument(
+        "--all-embedding-models",
+        action="store_true",
+        help="Evaluate every registered embedding alias",
+    )
+    eval_parser.add_argument("--corpora", nargs="+", help="Only evaluate these corpus names")
+    eval_parser.add_argument(
+        "--enrichment-models", nargs="+", help="Only evaluate these enrichment corpus names"
+    )
+    eval_parser.add_argument(
+        "--difficulty",
+        choices=["easy", "moderate", "difficult"],
+        help="Filter benchmark queries by difficulty",
+    )
+    eval_parser.add_argument("--categories", nargs="+", help="Filter benchmark queries by category")
+    eval_parser.add_argument("--benchmark", help="Path to benchmark queries JSON file (optional)")
     eval_parser.add_argument(
         "--create-benchmark",
         action="store_true",
-        help="Create new benchmark queries from JSON files"
+        help="Create new benchmark queries from JSON files",
     )
     eval_parser.add_argument(
         "--num-queries",
         type=int,
         default=20,
-        help="Number of benchmark queries to create (if creating benchmark)"
+        help="Number of benchmark queries to create (if creating benchmark)",
     )
     eval_parser.add_argument(
-        "--k",
-        type=int,
-        default=10,
-        help="Number of results to retrieve per query"
+        "--k", type=int, default=10, help="Number of results to retrieve per query"
     )
     eval_parser.add_argument(
-        "--output-dir", "-o",
+        "--output-dir",
+        "-o",
         default="/home/igorr/Projects/op-python/optima/output",
-        help="Directory containing Optima JSON output files"
+        help="Directory containing Optima JSON output files",
     )
     eval_parser.set_defaults(func=cmd_evaluate)
 
     # retrieve command
-    retrieve_parser = subparsers.add_parser(
-        "retrieve",
-        help="Perform retrieval or RAG query"
-    )
+    retrieve_parser = subparsers.add_parser("retrieve", help="Perform retrieval or RAG query")
     retrieve_parser.add_argument(
         "--embedding-model",
         default="bge-small",
-        help="Embedding alias or HuggingFace model name used for indices"
+        help="Embedding alias or HuggingFace model name used for indices",
     )
+    retrieve_parser.add_argument("--corpus", choices=["raw"], help="Query the raw baseline corpus")
     retrieve_parser.add_argument(
-        "--corpus",
-        choices=["raw"],
-        help="Query the raw baseline corpus"
+        "--enrichment-model", help="Query an enriched corpus (specify model name)"
     )
-    retrieve_parser.add_argument(
-        "--enrichment-model",
-        help="Query an enriched corpus (specify model name)"
-    )
-    retrieve_parser.add_argument(
-        "--query",
-        required=True,
-        help="Query text"
-    )
-    retrieve_parser.add_argument(
-        "--k",
-        type=int,
-        default=5,
-        help="Number of results to retrieve"
-    )
+    retrieve_parser.add_argument("--query", required=True, help="Query text")
+    retrieve_parser.add_argument("--k", type=int, default=5, help="Number of results to retrieve")
     retrieve_parser.add_argument(
         "--rag-mode",
         action="store_true",
-        help="Use RAG pipeline with LLM (retrieval-only if not specified)"
+        help="Use RAG pipeline with LLM (retrieval-only if not specified)",
     )
     retrieve_parser.add_argument(
-        "--verbose",
-        action="count",
-        default=0,
-        help="Increase verbosity for output"
+        "--verbose", action="count", default=0, help="Increase verbosity for output"
     )
     retrieve_parser.add_argument(
-        "--output-dir", "-o",
+        "--output-dir",
+        "-o",
         default="/home/igorr/Projects/op-python/optima/output",
-        help="Directory containing Optima JSON output files"
+        help="Directory containing Optima JSON output files",
     )
     retrieve_parser.set_defaults(func=cmd_retrieve)
 
     # Research pipelines: benchmark building, pipeline/suite runs, reports
     from .research.cli import register as register_research
+
     register_research(subparsers)
 
     args = parser.parse_args()

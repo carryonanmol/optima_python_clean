@@ -1,20 +1,21 @@
 """
 Optima enricher: uses LM Studio to enrich base.json with semantic information.
 """
-import json
-import os
-import sys
-import time
+
 import datetime
-import re
-import statistics
-import tempfile
-import urllib.request
-import urllib.error
-from pathlib import Path
-from typing import Dict, Any, List, Optional
+import json
 import logging
 import math
+import os
+import re
+import statistics
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -46,8 +47,17 @@ ENRICHMENT_JSON_SCHEMA = {
         },
     },
     "required": [
-        "purpose", "behavior", "summary", "inputs", "outputs", "side_effects",
-        "dependencies", "concepts", "keywords", "algorithm", "complexity",
+        "purpose",
+        "behavior",
+        "summary",
+        "inputs",
+        "outputs",
+        "side_effects",
+        "dependencies",
+        "concepts",
+        "keywords",
+        "algorithm",
+        "complexity",
     ],
     "additionalProperties": False,
 }
@@ -57,6 +67,7 @@ def _estimate_tokens(text: str) -> int:
     """Conservatively estimate tokens without adding a tokenizer dependency."""
     try:
         import tiktoken
+
         try:
             encoding = tiktoken.encoding_for_model("gpt-4")
         except Exception:
@@ -67,7 +78,7 @@ def _estimate_tokens(text: str) -> int:
         return math.ceil(len(text) / 3)
 
 
-def _context_size_from_record(record: Dict[str, Any]) -> Optional[int]:
+def _context_size_from_record(record: dict[str, Any]) -> int | None:
     preferred_keys = ("context_length", "n_ctx", "context_window")
     fallback_keys = ("max_context_length", "max_context_tokens", "max_position_embeddings")
     queue = [record]
@@ -120,6 +131,7 @@ def _compact_ast(ast: Any, limit: int = 1200) -> str:
         return "unavailable"
     if isinstance(ast, dict):
         nodes = []
+
         def visit(node: Any, depth: int = 0) -> None:
             if not isinstance(node, dict) or len(nodes) >= 80:
                 return
@@ -129,6 +141,7 @@ def _compact_ast(ast: Any, limit: int = 1200) -> str:
                 nodes.append(f"{'  ' * min(depth, 3)}{kind}: {spelling}".strip())
             for child in node.get("children", []):
                 visit(child, depth + 1)
+
         visit(ast)
         return "\n".join(nodes)[:limit] or "unavailable"
     return str(ast)[:limit]
@@ -141,12 +154,25 @@ def _compact_llvm(llvm: Any, limit: int = 5000) -> str:
     important = []
     for line in lines:
         stripped = line.strip()
-        if (
-            stripped.startswith(("define ", "}", "br ", "switch ", "ret ", "call ",
-                                  "load ", "store ", "atomicrmw ", "cmpxchg ",
-                                  "add ", "sub ", "mul ", "icmp ", "fcmp "))
-            or (stripped.endswith(":") and not stripped.startswith(";"))
-        ):
+        if stripped.startswith(
+            (
+                "define ",
+                "}",
+                "br ",
+                "switch ",
+                "ret ",
+                "call ",
+                "load ",
+                "store ",
+                "atomicrmw ",
+                "cmpxchg ",
+                "add ",
+                "sub ",
+                "mul ",
+                "icmp ",
+                "fcmp ",
+            )
+        ) or (stripped.endswith(":") and not stripped.startswith(";")):
             important.append(line)
     compact = "\n".join(important)
     return (compact or str(llvm))[:limit] or "unavailable"
@@ -158,7 +184,7 @@ def _trim_source(source: str, limit: int) -> str:
     if limit < 80:
         return source[:limit]
     head = int(limit * 0.75)
-    return source[:head] + "\n... [source reduced] ...\n" + source[-(limit - head - 25):]
+    return source[:head] + "\n... [source reduced] ...\n" + source[-(limit - head - 25) :]
 
 
 def _response_preview(content: str, limit: int = 500) -> str:
@@ -167,7 +193,7 @@ def _response_preview(content: str, limit: int = 500) -> str:
     return preview if len(preview) <= limit else preview[:limit] + "... [truncated]"
 
 
-def _parse_json_object(content: str) -> tuple[Optional[Dict[str, Any]], str]:
+def _parse_json_object(content: str) -> tuple[dict[str, Any] | None, str]:
     """Recover a JSON object from a raw LLM response as permissively as
     possible, in a fixed order, so a model is never marked invalid_json for
     formatting alone:
@@ -200,10 +226,9 @@ def _parse_json_object(content: str) -> tuple[Optional[Dict[str, Any]], str]:
 
     fence_pattern = re.compile(r"```(\w*)[ \t]*\r?\n?(.*?)```", re.DOTALL)
     fence_matches = list(fence_pattern.finditer(stripped))
-    ordered_bodies = (
-        [m.group(2) for m in fence_matches if m.group(1).lower() == "json"]
-        + [m.group(2) for m in fence_matches if m.group(1).lower() != "json"]
-    )
+    ordered_bodies = [m.group(2) for m in fence_matches if m.group(1).lower() == "json"] + [
+        m.group(2) for m in fence_matches if m.group(1).lower() != "json"
+    ]
     saw_non_object = False
     for body in ordered_bodies:
         try:
@@ -230,13 +255,17 @@ def _parse_json_object(content: str) -> tuple[Optional[Dict[str, Any]], str]:
 
 class LMStudioClient:
     def __init__(
-        self, base_url: str = DEFAULT_BASE_URL, api_key: str = DEFAULT_API_KEY,
-        model: Optional[str] = None, timeout: int = 120,
-        context_size: Optional[int] = None, max_input_tokens: Optional[int] = None,
+        self,
+        base_url: str = DEFAULT_BASE_URL,
+        api_key: str = DEFAULT_API_KEY,
+        model: str | None = None,
+        timeout: int = 120,
+        context_size: int | None = None,
+        max_input_tokens: int | None = None,
         reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS,
         debug: bool = False,
     ):
-        self.base_url = base_url.rstrip('/')
+        self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
         self.model = model
@@ -252,8 +281,7 @@ class LMStudioClient:
         """Discover the first available model from LM Studio."""
         try:
             req = urllib.request.Request(
-                f"{self.base_url}/models",
-                headers={"Authorization": f"Bearer {self.api_key}"}
+                f"{self.base_url}/models", headers={"Authorization": f"Bearer {self.api_key}"}
             )
             with urllib.request.urlopen(req, timeout=self.timeout) as response:
                 data = json.load(response)
@@ -268,36 +296,12 @@ class LMStudioClient:
             logger.error(f"Failed to discover LM Studio model: {e}")
             raise
 
-    def check_connection(self) -> bool:
-        """Check if LM Studio server is reachable and the model exists."""
-        try:
-            # Check models endpoint
-            req = urllib.request.Request(
-                f"{self.base_url}/models",
-                headers={"Authorization": f"Bearer {self.api_key}"}
-            )
-            with urllib.request.urlopen(req, timeout=self.timeout) as response:
-                data = json.load(response)
-                model_records = data.get("data", [])
-                models = {m["id"] for m in model_records}
-                if self.model not in models:
-                    logger.error(f"Model '{self.model}' not found. Available models: {list(models)}")
-                    return False
-                self.model_id = next(
-                    (m.get("id") for m in model_records if m.get("id") == self.model),
-                    None
-                )
-            return True
-        except Exception as e:
-            logger.error(f"LM Studio server unavailable at {self.base_url}: {e}")
-            return False
-
-    def _get_model_records(self) -> List[Dict[str, Any]]:
+    def _get_model_records(self) -> list[dict[str, Any]]:
         req = urllib.request.Request(f"{self.base_url}/models")
         with urllib.request.urlopen(req, timeout=self.timeout) as response:
             return json.load(response).get("data", [])
 
-    def _get_native_model_records(self) -> Optional[List[Dict[str, Any]]]:
+    def _get_native_model_records(self) -> list[dict[str, Any]] | None:
         """Return LM Studio runtime records, including loaded_instances."""
         api_root = self.base_url.rsplit("/v1", 1)[0]
         try:
@@ -309,7 +313,7 @@ class LMStudioClient:
         except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError):
             return None
 
-    def prepare_model(self, timeout_seconds: int = 300, poll_seconds: int = 2) -> Dict[str, Any]:
+    def prepare_model(self, timeout_seconds: int = 300, poll_seconds: int = 2) -> dict[str, Any]:
         """Load and verify the selected model once before processing functions."""
         started = time.time()
         records = self._get_model_records()
@@ -318,8 +322,7 @@ class LMStudioClient:
         if selected is None:
             raise RuntimeError(f"Requested model '{self.model}' is not available in LM Studio.")
         native_selected = next(
-            (record for record in native_records or []
-             if record.get("key") == self.model), None
+            (record for record in native_records or [] if record.get("key") == self.model), None
         )
         already_loaded = (
             bool(native_selected.get("loaded_instances"))
@@ -341,19 +344,23 @@ class LMStudioClient:
         else:
             print("Model already loaded.")
         while time.time() - started <= timeout_seconds:
-            selected = next((record for record in self._get_model_records()
-                             if record.get("id") == self.model), None)
+            selected = next(
+                (record for record in self._get_model_records() if record.get("id") == self.model),
+                None,
+            )
             native_records = self._get_native_model_records()
             native_selected = next(
-                (record for record in native_records or []
-                 if record.get("key") == self.model), None
+                (record for record in native_records or [] if record.get("key") == self.model), None
             )
             if selected:
-                discovered_context = (
-                    _context_size_from_record(native_selected or {})
-                    or _context_size_from_record(selected)
-                )
-                if self.max_input_tokens is None and self.context_size == DEFAULT_CONTEXT_SIZE and discovered_context:
+                discovered_context = _context_size_from_record(
+                    native_selected or {}
+                ) or _context_size_from_record(selected)
+                if (
+                    self.max_input_tokens is None
+                    and self.context_size == DEFAULT_CONTEXT_SIZE
+                    and discovered_context
+                ):
                     self.context_size = discovered_context
                 state = selected.get("state", "loaded")
                 loaded = (
@@ -363,7 +370,9 @@ class LMStudioClient:
                 )
                 if loaded and state not in {"loading", "unloading", "error"}:
                     waited = 0.0 if already_loaded else time.time() - started
-                    print(f"Requested model:\n{self.model}\n\nLoaded model:\n{selected.get('id')}\n\nStatus:\nREADY")
+                    print(
+                        f"Requested model:\n{self.model}\n\nLoaded model:\n{selected.get('id')}\n\nStatus:\nREADY"
+                    )
                     return {
                         "requested_model": self.model,
                         "loaded_model": selected.get("id"),
@@ -388,12 +397,16 @@ class LMStudioClient:
             logger.error("LM Studio unavailable at %s: %s", self.base_url, error)
             return False
 
-    def _prompt_for_stage(self, function_data: Dict[str, Any], stage: str) -> tuple[str, str, Dict[str, Any]]:
+    def _prompt_for_stage(
+        self, function_data: dict[str, Any], stage: str
+    ) -> tuple[str, str, dict[str, Any]]:
         """Build a priority-ordered prompt without cutting the final prompt blindly."""
-        system_prompt = ("You are a software code-analysis assistant.\n"
-                         "Analyze one function using its actual source and compiler evidence.\n"
-                         "Produce concise, factual semantic descriptions. The source is primary.\n"
-                         "Never invent behaviour, relationships, or compiler facts.")
+        system_prompt = (
+            "You are a software code-analysis assistant.\n"
+            "Analyze one function using its actual source and compiler evidence.\n"
+            "Produce concise, factual semantic descriptions. The source is primary.\n"
+            "Never invent behaviour, relationships, or compiler facts."
+        )
         source_location = function_data.get("source_location", function_data.get("source", {}))
         source = function_data.get("source_code", "")
         calls = _compact_calls(function_data.get("calls", []))
@@ -433,15 +446,17 @@ class LMStudioClient:
                 "return_type": function_data.get("return_type"),
             },
         }
-        system_prompt = ("You are a software code-analysis assistant.\n"
-                         "Analyze individual functions using their actual source code and\n"
-                         "compiler-derived information.\n"
-                         "Produce concise, factual semantic descriptions.\n"
-                         "The source implementation is the primary source of truth.\n"
-                         "Never invent behaviour.\n"
-                         "Never invent relationships.\n"
-                         "Never modify compiler facts.")
-        
+        system_prompt = (
+            "You are a software code-analysis assistant.\n"
+            "Analyze individual functions using their actual source code and\n"
+            "compiler-derived information.\n"
+            "Produce concise, factual semantic descriptions.\n"
+            "The source implementation is the primary source of truth.\n"
+            "Never invent behaviour.\n"
+            "Never invent relationships.\n"
+            "Never modify compiler facts."
+        )
+
         user_prompt = f"""Analyze this ONE function.
 
 Generate a JSON object with these fields:
@@ -507,12 +522,27 @@ AST:
 """
         return system_prompt, user_prompt, include
 
-    def _build_context(self, function_data: Dict[str, Any]) -> tuple[list[dict], Dict[str, Any], List[str]]:
-        stages = ["full", "compact_ast", "compact_cfg", "compact_llvm", "remove_llvm", "minimal_source_context"]
+    def _build_context(
+        self, function_data: dict[str, Any]
+    ) -> tuple[list[dict], dict[str, Any], list[str]]:
+        stages = [
+            "full",
+            "compact_ast",
+            "compact_cfg",
+            "compact_llvm",
+            "remove_llvm",
+            "minimal_source_context",
+        ]
         input_budget = self.max_input_tokens or (
             self.context_size - self.reserved_output_tokens - CONTEXT_SAFETY_MARGIN
         )
-        input_budget = max(256, min(input_budget, self.context_size - self.reserved_output_tokens - CONTEXT_SAFETY_MARGIN))
+        input_budget = max(
+            256,
+            min(
+                input_budget,
+                self.context_size - self.reserved_output_tokens - CONTEXT_SAFETY_MARGIN,
+            ),
+        )
         attempts = []
         for stage in stages:
             system_prompt, user_prompt, included = self._prompt_for_stage(function_data, stage)
@@ -542,10 +572,14 @@ AST:
                     )
                     if stage != "full":
                         print(f"Reducing optional context: {stage}")
-                return [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ], metrics, stages[stages.index(stage):]
+                return (
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    metrics,
+                    stages[stages.index(stage) :],
+                )
         # The source is high priority, but a very large source still needs a bounded final representation.
         stage, system_prompt, user_prompt, included, _ = attempts[-1]
         available_chars = max(200, input_budget * 3 - _estimate_tokens(system_prompt) * 3)
@@ -556,7 +590,11 @@ AST:
             source = _trim_source(user_prompt[source_start:source_end], available_chars)
             user_prompt = user_prompt[:source_start] + source + user_prompt[source_end:]
         estimated = _estimate_tokens(system_prompt + user_prompt)
-        while estimated > input_budget and source_start >= len(source_marker) and source_end >= source_start:
+        while (
+            estimated > input_budget
+            and source_start >= len(source_marker)
+            and source_end >= source_start
+        ):
             current_source = user_prompt[source_start:source_end]
             reduced = _trim_source(current_source, max(80, int(len(current_source) * 0.85)))
             if reduced == current_source:
@@ -575,9 +613,16 @@ AST:
             "cfg_included": False,
             "llvm_included": False,
         }
-        return [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}], metrics, []
+        return (
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            metrics,
+            [],
+        )
 
-    def enrich_function(self, function_data: Dict[str, Any], on_model_failure=None):
+    def enrich_function(self, function_data: dict[str, Any], on_model_failure=None):
         """Send one budgeted function prompt to LM Studio."""
         messages, context_metrics, remaining_stages = self._build_context(function_data)
         payload = {
@@ -619,25 +664,33 @@ AST:
                     result["status"] = "completed"
                     usage = response_data.get("usage", {})
                     result["usage"] = {
-                        "prompt_tokens": usage.get("prompt_tokens", context_metrics["estimated_input_tokens"]),
+                        "prompt_tokens": usage.get(
+                            "prompt_tokens", context_metrics["estimated_input_tokens"]
+                        ),
                         "completion_tokens": usage.get("completion_tokens"),
                         "total_tokens": usage.get("total_tokens"),
                     }
                     return result, {
-                        "request_success": True, "json_valid": True, "retry_count": attempt,
+                        "request_success": True,
+                        "json_valid": True,
+                        "retry_count": attempt,
                         "latency_seconds": latency_ms / 1000,
                         "context_metrics": context_metrics,
                     }
                 reason = schema_reason if result is not None else parse_reason
                 logger.warning(
                     "Enrichment failed: node_id=%s attempt=%d reason=%s response_preview=%s",
-                    function_data.get("id", "<unknown>"), attempt + 1, reason,
+                    function_data.get("id", "<unknown>"),
+                    attempt + 1,
+                    reason,
                     _response_preview(content),
                 )
                 if attempt >= max_retries:
                     return self._get_fallback_enhancement(attempt, reason), {
-                        "request_success": False, "json_valid": False,
-                        "retry_count": attempt, "latency_seconds": latency_ms / 1000,
+                        "request_success": False,
+                        "json_valid": False,
+                        "retry_count": attempt,
+                        "latency_seconds": latency_ms / 1000,
                         "failure_reason": reason,
                         "response_preview": _response_preview(content),
                         "context_metrics": context_metrics,
@@ -648,7 +701,9 @@ AST:
                     if not reduction_retry_used and remaining_stages and len(remaining_stages) > 1:
                         reduction_retry_used = True
                         next_stage = remaining_stages[1]
-                        system_prompt, user_prompt, included = self._prompt_for_stage(function_data, next_stage)
+                        system_prompt, user_prompt, included = self._prompt_for_stage(
+                            function_data, next_stage
+                        )
                         estimated = _estimate_tokens(system_prompt + user_prompt)
                         context_metrics = {
                             **context_metrics,
@@ -665,26 +720,37 @@ AST:
                             {"role": "user", "content": user_prompt},
                         ]
                         remaining_stages = remaining_stages[1:]
-                        logger.warning("Context limit reported by LM Studio; reduced context to %s", next_stage)
+                        logger.warning(
+                            "Context limit reported by LM Studio; reduced context to %s", next_stage
+                        )
                         continue
-                    logger.error("LM Studio rejected the prompt for context size; not retrying unchanged request")
+                    logger.error(
+                        "LM Studio rejected the prompt for context size; not retrying unchanged request"
+                    )
                     return self._get_fallback_enhancement(attempt, "context_limit"), {
-                        "request_success": False, "json_valid": False,
-                        "retry_count": attempt, "latency_seconds": time.time() - start_time,
+                        "request_success": False,
+                        "json_valid": False,
+                        "retry_count": attempt,
+                        "latency_seconds": time.time() - start_time,
                         "context_metrics": context_metrics,
                     }
                 reason = "api_request_failure"
                 logger.error(
                     "Enrichment failed: node_id=%s attempt=%d reason=%s http_status=%s response_preview=%s",
-                    function_data.get("id", "<unknown>"), attempt + 1, reason,
-                    error.code, _response_preview(error_body),
+                    function_data.get("id", "<unknown>"),
+                    attempt + 1,
+                    reason,
+                    error.code,
+                    _response_preview(error_body),
                 )
                 if on_model_failure is not None and attempt < max_retries:
                     on_model_failure()
                 if attempt >= max_retries:
                     return self._get_fallback_enhancement(attempt, reason), {
-                        "request_success": False, "json_valid": False,
-                        "retry_count": attempt, "latency_seconds": time.time() - start_time,
+                        "request_success": False,
+                        "json_valid": False,
+                        "retry_count": attempt,
+                        "latency_seconds": time.time() - start_time,
                         "failure_reason": reason,
                         "context_metrics": context_metrics,
                     }
@@ -692,27 +758,36 @@ AST:
                 reason = "api_request_failure"
                 logger.error(
                     "Enrichment failed: node_id=%s attempt=%d reason=%s error=%s",
-                    function_data.get("id", "<unknown>"), attempt + 1, reason, error.reason,
+                    function_data.get("id", "<unknown>"),
+                    attempt + 1,
+                    reason,
+                    error.reason,
                 )
                 if on_model_failure is not None and attempt < max_retries:
                     on_model_failure()
                 if attempt >= max_retries:
                     return self._get_fallback_enhancement(attempt, reason), {
-                        "request_success": False, "json_valid": False,
-                        "retry_count": attempt, "latency_seconds": time.time() - start_time,
+                        "request_success": False,
+                        "json_valid": False,
+                        "retry_count": attempt,
+                        "latency_seconds": time.time() - start_time,
                         "failure_reason": reason,
                         "context_metrics": context_metrics,
                     }
-            except Exception as error:
+            except Exception:
                 reason = "unexpected_error"
                 logger.exception(
                     "Enrichment failed: node_id=%s attempt=%d reason=%s",
-                    function_data.get("id", "<unknown>"), attempt + 1, reason,
+                    function_data.get("id", "<unknown>"),
+                    attempt + 1,
+                    reason,
                 )
                 if attempt >= max_retries:
                     return self._get_fallback_enhancement(attempt, reason), {
-                        "request_success": False, "json_valid": False,
-                        "retry_count": attempt, "latency_seconds": time.time() - start_time,
+                        "request_success": False,
+                        "json_valid": False,
+                        "retry_count": attempt,
+                        "latency_seconds": time.time() - start_time,
                         "failure_reason": reason,
                         "context_metrics": context_metrics,
                     }
@@ -722,23 +797,20 @@ AST:
         # Prepare the request
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": user_prompt},
         ]
         payload = {
             "model": self.model,
             "messages": messages,
             "temperature": 0.1,
-            "max_tokens": 500  # We don't need too many tokens
+            "max_tokens": 500,  # We don't need too many tokens
         }
-        data = json.dumps(payload).encode('utf-8')
+        data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             f"{self.base_url}/chat/completions",
             data=data,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}"
-            },
-            method="POST"
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"},
+            method="POST",
         )
 
         # Retry logic
@@ -764,13 +836,13 @@ AST:
                                 result["usage"] = {
                                     "prompt_tokens": usage.get("prompt_tokens"),
                                     "completion_tokens": usage.get("completion_tokens"),
-                                    "total_tokens": usage.get("total_tokens")
+                                    "total_tokens": usage.get("total_tokens"),
                                 }
                             else:
                                 result["usage"] = {
                                     "prompt_tokens": None,
                                     "completion_tokens": None,
-                                    "total_tokens": None
+                                    "total_tokens": None,
                                 }
                             return result, {
                                 "request_success": True,
@@ -779,7 +851,9 @@ AST:
                                 "latency_seconds": latency_ms / 1000,
                             }
                         else:
-                            logger.warning(f"Invalid enrichment received (attempt {attempt+1}): {result}")
+                            logger.warning(
+                                f"Invalid enrichment received (attempt {attempt + 1}): {result}"
+                            )
                             if attempt == max_retries:
                                 return self._get_fallback_enhancement(attempt), {
                                     "request_success": False,
@@ -788,7 +862,9 @@ AST:
                                     "latency_seconds": latency_ms / 1000,
                                 }
                     except json.JSONDecodeError:
-                        logger.warning(f"Invalid JSON from LM Studio (attempt {attempt+1}): {content}")
+                        logger.warning(
+                            f"Invalid JSON from LM Studio (attempt {attempt + 1}): {content}"
+                        )
                         if attempt == max_retries:
                             return self._get_fallback_enhancement(attempt), {
                                 "request_success": False,
@@ -799,45 +875,61 @@ AST:
             except urllib.error.HTTPError as e:
                 error_body = e.read().decode("utf-8", errors="replace")
                 logger.error(
-                    f"HTTP error from LM Studio (attempt {attempt+1}): "
+                    f"HTTP error from LM Studio (attempt {attempt + 1}): "
                     f"{e.code} {e.reason}: {error_body[:500]}"
                 )
                 if on_model_failure is not None and attempt < max_retries:
                     on_model_failure()
                 if attempt == max_retries:
                     return self._get_fallback_enhancement(attempt), {
-                        "request_success": False, "json_valid": False,
-                        "retry_count": attempt, "latency_seconds": time.time() - start_time,
+                        "request_success": False,
+                        "json_valid": False,
+                        "retry_count": attempt,
+                        "latency_seconds": time.time() - start_time,
                     }
             except urllib.error.URLError as e:
-                logger.error(f"URL error from LM Studio (attempt {attempt+1}): {e.reason}")
+                logger.error(f"URL error from LM Studio (attempt {attempt + 1}): {e.reason}")
                 if on_model_failure is not None and attempt < max_retries:
                     on_model_failure()
                 if attempt == max_retries:
                     return self._get_fallback_enhancement(attempt), {
-                        "request_success": False, "json_valid": False,
-                        "retry_count": attempt, "latency_seconds": time.time() - start_time,
+                        "request_success": False,
+                        "json_valid": False,
+                        "retry_count": attempt,
+                        "latency_seconds": time.time() - start_time,
                     }
             except Exception as e:
-                logger.error(f"Unexpected error enriching function (attempt {attempt+1}): {e}")
+                logger.error(f"Unexpected error enriching function (attempt {attempt + 1}): {e}")
                 if on_model_failure is not None and attempt < max_retries:
                     on_model_failure()
                 if attempt == max_retries:
-                            return self._get_fallback_enhancement(attempt), {
-                                "request_success": False, "json_valid": False,
-                                "retry_count": attempt, "latency_seconds": time.time() - start_time,
-                            }
+                    return self._get_fallback_enhancement(attempt), {
+                        "request_success": False,
+                        "json_valid": False,
+                        "retry_count": attempt,
+                        "latency_seconds": time.time() - start_time,
+                    }
             # Wait a bit before retrying
             time.sleep(1)
 
-    def _validate_enhancement(self, enhancement: Optional[Dict[str, Any]]) -> tuple[bool, str]:
+    def _validate_enhancement(self, enhancement: dict[str, Any] | None) -> tuple[bool, str]:
         """Validate the enrichment result."""
         if not isinstance(enhancement, dict):
             return False, "json_root_not_object"
         required_strings = ("purpose", "behavior", "summary", "algorithm")
-        required_arrays = ("inputs", "outputs", "side_effects", "dependencies", "concepts", "keywords")
-        missing = [field for field in (*required_strings, *required_arrays, "complexity")
-                   if field not in enhancement]
+        required_arrays = (
+            "inputs",
+            "outputs",
+            "side_effects",
+            "dependencies",
+            "concepts",
+            "keywords",
+        )
+        missing = [
+            field
+            for field in (*required_strings, *required_arrays, "complexity")
+            if field not in enhancement
+        ]
         if missing:
             return False, f"missing_fields:{','.join(missing)}"
         if any(not isinstance(enhancement[field], str) for field in required_strings):
@@ -861,15 +953,18 @@ AST:
         placeholders = [
             "What the function actually does",
             "What this function is intended to accomplish",
-            "What this function is intended to do"
+            "What this function is intended to do",
         ]
-        if enhancement["behavior"].strip() in placeholders or enhancement["purpose"].strip() in placeholders:
+        if (
+            enhancement["behavior"].strip() in placeholders
+            or enhancement["purpose"].strip() in placeholders
+        ):
             return False, "placeholder_response"
         return True, "valid"
 
     def _get_fallback_enhancement(
         self, retry_count: int = 0, failure_reason: str = "enrichment_failed"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Return a fallback enhancement when LM Studio fails."""
         return {
             "behavior": "Insufficient implementation context.",
@@ -887,16 +982,12 @@ AST:
             "model": self.model,
             "status": "failed",
             "failure_reason": failure_reason,
-            "usage": {
-                "prompt_tokens": None,
-                "completion_tokens": None,
-                "total_tokens": None
-            }
+            "usage": {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None},
         }
 
 
 def _timestamp() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return datetime.datetime.now(datetime.UTC).isoformat()
 
 
 def _safe_model_name(model: str) -> str:
@@ -914,15 +1005,29 @@ def _unique_string_count(value: Any) -> int:
     return len({item for item in value if isinstance(item, str)})
 
 
-def _field_completeness(enrichment: Dict[str, Any]) -> Dict[str, bool]:
-    fields = ["purpose", "behavior", "summary", "inputs", "outputs",
-              "side_effects", "dependencies", "concepts", "keywords",
-              "algorithm", "complexity"]
+def _field_completeness(enrichment: dict[str, Any]) -> dict[str, bool]:
+    fields = [
+        "purpose",
+        "behavior",
+        "summary",
+        "inputs",
+        "outputs",
+        "side_effects",
+        "dependencies",
+        "concepts",
+        "keywords",
+        "algorithm",
+        "complexity",
+    ]
     return {field: _usable(enrichment.get(field)) for field in fields}
 
 
-def _evaluation(function_data: Dict[str, Any], enrichment: Dict[str, Any],
-                request_metrics: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+def _evaluation(
+    function_data: dict[str, Any],
+    enrichment: dict[str, Any],
+    request_metrics: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
     completeness = _field_completeness(enrichment)
     usage = enrichment.get("usage", {})
     total_tokens = usage.get("total_tokens")
@@ -933,8 +1038,12 @@ def _evaluation(function_data: Dict[str, Any], enrichment: Dict[str, Any],
         "total_tokens": total_tokens,
         "response_characters": len(json.dumps(enrichment, ensure_ascii=False)),
         "field_completeness": completeness,
-        "keyword_count": len(enrichment.get("keywords", [])) if isinstance(enrichment.get("keywords"), list) else 0,
-        "concept_count": len(enrichment.get("concepts", [])) if isinstance(enrichment.get("concepts"), list) else 0,
+        "keyword_count": len(enrichment.get("keywords", []))
+        if isinstance(enrichment.get("keywords"), list)
+        else 0,
+        "concept_count": len(enrichment.get("concepts", []))
+        if isinstance(enrichment.get("concepts"), list)
+        else 0,
         "unique_keyword_count": _unique_string_count(enrichment.get("keywords")),
         "unique_concept_count": _unique_string_count(enrichment.get("concepts")),
         "summary_length": len(str(enrichment.get("summary", ""))),
@@ -947,7 +1056,7 @@ def _evaluation(function_data: Dict[str, Any], enrichment: Dict[str, Any],
     }
 
 
-def _dataset_metrics(functions: List[Dict[str, Any]], elapsed: float) -> Dict[str, Any]:
+def _dataset_metrics(functions: list[dict[str, Any]], elapsed: float) -> dict[str, Any]:
     evaluations = [f["enrichment"]["evaluation"] for f in functions if "enrichment" in f]
     total = len(functions)
     successes = sum(e["request_success"] for e in evaluations)
@@ -959,10 +1068,26 @@ def _dataset_metrics(functions: List[Dict[str, Any]], elapsed: float) -> Dict[st
     valid = sum(e["json_valid"] for e in evaluations)
     schema_valid_count = sum(1 for e in evaluations if e.get("schema_valid"))
     latencies = [e["latency_seconds"] for e in evaluations]
-    fields = ["purpose", "behavior", "summary", "inputs", "outputs", "side_effects",
-              "dependencies", "concepts", "keywords", "algorithm", "complexity"]
+    fields = [
+        "purpose",
+        "behavior",
+        "summary",
+        "inputs",
+        "outputs",
+        "side_effects",
+        "dependencies",
+        "concepts",
+        "keywords",
+        "algorithm",
+        "complexity",
+    ]
+
     def rate(field):
-        return sum(e["field_completeness"].get(field, False) for e in evaluations) / len(evaluations) if evaluations else 0
+        return (
+            sum(e["field_completeness"].get(field, False) for e in evaluations) / len(evaluations)
+            if evaluations
+            else 0
+        )
 
     # JSON-recovery method breakdown -- only meaningful for successful
     # (json_valid) requests; json_recovery_method is None/absent otherwise.
@@ -976,7 +1101,9 @@ def _dataset_metrics(functions: List[Dict[str, Any]], elapsed: float) -> Dict[st
     surrounding_text_recovered_count = sum(
         1 for e in evaluations if e.get("json_recovery_method") == "surrounding_text"
     )
-    json_repair_count = sum(1 for e in evaluations if e.get("request_success") and e.get("repair_used"))
+    json_repair_count = sum(
+        1 for e in evaluations if e.get("request_success") and e.get("repair_used")
+    )
     unrecoverable_json_count = sum(1 for e in evaluations if not e.get("request_success"))
 
     return {
@@ -999,38 +1126,64 @@ def _dataset_metrics(functions: List[Dict[str, Any]], elapsed: float) -> Dict[st
         "failure_rate": (total - successes) / total if total else 0,
         "average_latency_seconds": statistics.mean(latencies) if latencies else 0,
         "median_latency_seconds": statistics.median(latencies) if latencies else 0,
-        "p95_latency_seconds": sorted(latencies)[min(len(latencies) - 1, max(0, int(len(latencies) * .95) - 1))] if latencies else 0,
+        "p95_latency_seconds": sorted(latencies)[
+            min(len(latencies) - 1, max(0, int(len(latencies) * 0.95) - 1))
+        ]
+        if latencies
+        else 0,
         "total_enrichment_seconds": elapsed,
         "functions_per_second": total / elapsed if elapsed else 0,
-        "average_keyword_count": statistics.mean([e["keyword_count"] for e in evaluations]) if evaluations else 0,
-        "average_concept_count": statistics.mean([e["concept_count"] for e in evaluations]) if evaluations else 0,
-        "average_summary_characters": statistics.mean([e["summary_length"] for e in evaluations]) if evaluations else 0,
+        "average_keyword_count": statistics.mean([e["keyword_count"] for e in evaluations])
+        if evaluations
+        else 0,
+        "average_concept_count": statistics.mean([e["concept_count"] for e in evaluations])
+        if evaluations
+        else 0,
+        "average_summary_characters": statistics.mean([e["summary_length"] for e in evaluations])
+        if evaluations
+        else 0,
         "field_completeness": {field: rate(field) for field in fields},
-        "overall_field_completeness": statistics.mean([sum(e["field_completeness"].values()) / len(fields) for e in evaluations]) if evaluations else 0,
+        "overall_field_completeness": statistics.mean(
+            [sum(e["field_completeness"].values()) / len(fields) for e in evaluations]
+        )
+        if evaluations
+        else 0,
     }
 
 
-def enrich_analysis(base_json_path: Path, output_dir: Path, model: Optional[str] = None,
-                    output_path: Optional[Path] = None, base_url: str = DEFAULT_BASE_URL,
-                    model_load_timeout: int = 300, limit: Optional[int] = None,
-                    context_size: Optional[int] = None, max_input_tokens: Optional[int] = None,
-                    reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS,
-                    debug: bool = False) -> Path:
+def enrich_analysis(
+    base_json_path: Path,
+    output_dir: Path,
+    model: str | None = None,
+    output_path: Path | None = None,
+    base_url: str = DEFAULT_BASE_URL,
+    model_load_timeout: int = 300,
+    limit: int | None = None,
+    context_size: int | None = None,
+    max_input_tokens: int | None = None,
+    reserved_output_tokens: int = DEFAULT_RESERVED_OUTPUT_TOKENS,
+    debug: bool = False,
+) -> Path:
     """Enrich base.json with LM Studio to produce enhanced.json."""
     base_json_path = base_json_path.resolve()
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    with open(base_json_path, 'r') as f:
+    with open(base_json_path) as f:
         base_data = json.load(f)
 
     client = LMStudioClient(
-        base_url=base_url, model=model, context_size=context_size,
+        base_url=base_url,
+        model=model,
+        context_size=context_size,
         max_input_tokens=max_input_tokens,
-        reserved_output_tokens=reserved_output_tokens, debug=debug,
+        reserved_output_tokens=reserved_output_tokens,
+        debug=debug,
     )
     if not client.check_connection():
-        logger.error("LM Studio connection check failed. Please ensure LM Studio is running and a model is loaded.")
+        logger.error(
+            "LM Studio connection check failed. Please ensure LM Studio is running and a model is loaded."
+        )
         sys.exit(1)
     print("Optima Enrichment\n=================\n")
     print(f"Base: {base_json_path}\nModel: {client.model}\n")
@@ -1049,7 +1202,8 @@ def enrich_analysis(base_json_path: Path, output_dir: Path, model: Optional[str]
             existing = json.load(f)
     result_data = json.loads(json.dumps(base_data))
     prior_functions = {
-        f["id"]: f for file_info in existing.get("files", [])
+        f["id"]: f
+        for file_info in existing.get("files", [])
         for f in file_info.get("functions", [])
         if f.get("enrichment", {}).get("evaluation", {}).get("request_success") is True
     }
@@ -1069,7 +1223,9 @@ def enrich_analysis(base_json_path: Path, output_dir: Path, model: Optional[str]
         "ast": bool(func.get("ast")),
         "call_graph": bool(func.get("calls") or func.get("called_by")),
         "llvm": bool(func.get("llvm_ir")),
-        "cfg": bool(func.get("cfg", {}).get("nodes") or func.get("llvm", {}).get("cfg", {}).get("nodes")),
+        "cfg": bool(
+            func.get("cfg", {}).get("nodes") or func.get("llvm", {}).get("cfg", {}).get("nodes")
+        ),
         "source_characters": len(func.get("source_code", "")),
         "llvm_characters": len(func.get("llvm_ir", "")),
         "cfg_nodes": len(func.get("cfg", {}).get("nodes", [])),
@@ -1080,7 +1236,9 @@ def enrich_analysis(base_json_path: Path, output_dir: Path, model: Optional[str]
         for func in file_info.get("functions", []):
             if func["id"] not in functions_by_id:
                 continue
-            target = next(f for f in result_data["files"] if f["relative_path"] == file_info["relative_path"])["functions"]
+            target = next(
+                f for f in result_data["files"] if f["relative_path"] == file_info["relative_path"]
+            )["functions"]
             target_func = next(f for f in target if f["id"] == func["id"])
             if func["id"] in prior_functions:
                 target_func["enrichment"] = prior_functions[func["id"]]["enrichment"]
@@ -1095,16 +1253,23 @@ def enrich_analysis(base_json_path: Path, output_dir: Path, model: Optional[str]
                     **context(func),
                     **metrics.get("context_metrics", {}),
                 }
-                enrichment["evaluation"] = _evaluation(func, enrichment, metrics, evaluation_context)
+                enrichment["evaluation"] = _evaluation(
+                    func, enrichment, metrics, evaluation_context
+                )
                 target_func["enrichment"] = enrichment
                 result_data["enrichment_metadata"] = {
-                    "provider": "LM Studio", "base_url": client.base_url,
-                    "model": client.model, "model_id": client.model_id,
-                    "started_at": started_at, "completed_at": _timestamp(),
+                    "provider": "LM Studio",
+                    "base_url": client.base_url,
+                    "model": client.model,
+                    "model_id": client.model_id,
+                    "started_at": started_at,
+                    "completed_at": _timestamp(),
                     "total_functions": total_functions,
                     "model_runtime": model_runtime,
                 }
-                result_data["enrichment_metrics"] = _dataset_metrics(all_functions, time.time() - experiment_start)
+                result_data["enrichment_metrics"] = _dataset_metrics(
+                    all_functions, time.time() - experiment_start
+                )
                 output_file.parent.mkdir(parents=True, exist_ok=True)
                 with tempfile.NamedTemporaryFile("w", dir=output_file.parent, delete=False) as tmp:
                     json.dump(result_data, tmp, indent=2)
@@ -1112,9 +1277,12 @@ def enrich_analysis(base_json_path: Path, output_dir: Path, model: Optional[str]
                 os.replace(temp_name, output_file)
 
     result_data["enrichment_metadata"] = {
-        "provider": "LM Studio", "base_url": client.base_url,
-        "model": client.model, "model_id": client.model_id,
-        "started_at": started_at, "completed_at": _timestamp(),
+        "provider": "LM Studio",
+        "base_url": client.base_url,
+        "model": client.model,
+        "model_id": client.model_id,
+        "started_at": started_at,
+        "completed_at": _timestamp(),
         "total_functions": total_functions,
         "enriched_functions": sum(
             f.get("enrichment", {}).get("evaluation", {}).get("request_success", False)
@@ -1127,18 +1295,22 @@ def enrich_analysis(base_json_path: Path, output_dir: Path, model: Optional[str]
         ),
     }
     result_data["experiment"] = {
-        "model": client.model, "temperature": 0.1, "batch_size": 1,
-        "prompt_version": "v2", "schema_version": "v1",
+        "model": client.model,
+        "temperature": 0.1,
+        "batch_size": 1,
+        "prompt_version": "v2",
+        "schema_version": "v1",
         "base_json": str(base_json_path),
     }
-    result_data["enrichment_metrics"] = _dataset_metrics(all_functions, time.time() - experiment_start)
+    result_data["enrichment_metrics"] = _dataset_metrics(
+        all_functions, time.time() - experiment_start
+    )
     result_data["enrichment_metrics"]["model_load_seconds"] = model_runtime["load_wait_seconds"]
     result_data["enrichment_metrics"]["total_inference_seconds"] = sum(
-        f["enrichment"]["evaluation"]["latency_seconds"]
-        for f in all_functions if "enrichment" in f
+        f["enrichment"]["evaluation"]["latency_seconds"] for f in all_functions if "enrichment" in f
     )
     result_data["enrichment_metrics"]["total_runtime_seconds"] = time.time() - experiment_start
-    with open(output_file, 'w') as f:
+    with open(output_file, "w") as f:
         json.dump(result_data, f, indent=2)
 
     return output_file
@@ -1147,6 +1319,7 @@ def enrich_analysis(base_json_path: Path, output_dir: Path, model: Optional[str]
 if __name__ == "__main__":
     # For testing
     import sys
+
     if len(sys.argv) != 2:
         print("Usage: python enricher.py <base_json_path>")
         sys.exit(1)

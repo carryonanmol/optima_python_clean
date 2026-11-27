@@ -14,10 +14,10 @@ import logging
 import os
 import re
 import time
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -34,7 +34,7 @@ class EmbeddingSpec:
 
 # Keep the model names in one place.  ``mock`` is useful for offline smoke
 # tests and is intentionally not selected by --all-embedding-models.
-EMBEDDING_REGISTRY: Dict[str, EmbeddingSpec] = {
+EMBEDDING_REGISTRY: dict[str, EmbeddingSpec] = {
     "bge-small": EmbeddingSpec("bge-small", "BAAI/bge-small-en-v1.5"),
     "bge-base": EmbeddingSpec("bge-base", "BAAI/bge-base-en-v1.5"),
     "nomic": EmbeddingSpec("nomic", "nomic-ai/nomic-embed-text-v1.5"),
@@ -47,8 +47,7 @@ EMBEDDING_REGISTRY: Dict[str, EmbeddingSpec] = {
 EMBEDDING_MODELS = {alias: spec.model_name for alias, spec in EMBEDDING_REGISTRY.items()}
 
 
-def register_embedding_model(alias: str, model_name: str,
-                             description: str = "") -> EmbeddingSpec:
+def register_embedding_model(alias: str, model_name: str, description: str = "") -> EmbeddingSpec:
     """Register or replace an embedding alias for applications and tests."""
     clean_alias = _slug(alias)
     if not clean_alias:
@@ -59,11 +58,10 @@ def register_embedding_model(alias: str, model_name: str,
     return spec
 
 
-def get_embedding_registry(include_mock: bool = False) -> Dict[str, EmbeddingSpec]:
+def get_embedding_registry(include_mock: bool = False) -> dict[str, EmbeddingSpec]:
     """Return a copy of the configured registry."""
     return {
-        alias: spec for alias, spec in EMBEDDING_REGISTRY.items()
-        if include_mock or alias != "mock"
+        alias: spec for alias, spec in EMBEDDING_REGISTRY.items() if include_mock or alias != "mock"
     }
 
 
@@ -93,8 +91,7 @@ def get_embedding_model_name(model_or_alias: str) -> str:
     return resolve_embedding_model(model_or_alias).model_name
 
 
-def index_directory(output_base_dir: Path, corpus_name: str,
-                    model_or_alias: str) -> Path:
+def index_directory(output_base_dir: Path, corpus_name: str, model_or_alias: str) -> Path:
     """Return the canonical non-overlapping index directory."""
     return Path(output_base_dir) / "indexes" / _slug(corpus_name) / embedding_alias(model_or_alias)
 
@@ -103,12 +100,12 @@ def metadata_path(index_path: Path) -> Path:
     return Path(index_path) / "metadata.json"
 
 
-def load_index_metadata(index_path: Path) -> Dict[str, Any]:
+def load_index_metadata(index_path: Path) -> dict[str, Any]:
     """Read index metadata, returning an empty mapping for legacy indexes."""
     return _read_metadata(Path(index_path))
 
 
-def _read_metadata(index_path: Path) -> Dict[str, Any]:
+def _read_metadata(index_path: Path) -> dict[str, Any]:
     try:
         with metadata_path(index_path).open(encoding="utf-8") as handle:
             data = json.load(handle)
@@ -123,12 +120,13 @@ def _embedding_device() -> str:
         return configured
     try:
         import torch
+
         return "cuda" if torch.cuda.is_available() else "cpu"
     except ImportError:
         return "cpu"
 
 
-def get_embeddings(embedding_model_name: str, device: Optional[str] = None):
+def get_embeddings(embedding_model_name: str, device: str | None = None):
     """Load a registered model, falling back to deterministic embeddings."""
     spec = resolve_embedding_model(embedding_model_name)
     try:
@@ -136,6 +134,7 @@ def get_embeddings(embedding_model_name: str, device: Optional[str] = None):
             raise RuntimeError("mock embedding requested")
         logger.info("Attempting to load embedding model %s (%s)", spec.alias, spec.model_name)
         from langchain_huggingface import HuggingFaceEmbeddings
+
         selected_device = device or _embedding_device()
         return HuggingFaceEmbeddings(
             model_name=spec.model_name,
@@ -143,17 +142,23 @@ def get_embeddings(embedding_model_name: str, device: Optional[str] = None):
             encode_kwargs={"normalize_embeddings": True},
         )
     except Exception as exc:
-        logger.warning("Could not load %s (%s); using mock embeddings: %s",
-                       spec.alias, spec.model_name, exc)
+        logger.warning(
+            "Could not load %s (%s); using mock embeddings: %s", spec.alias, spec.model_name, exc
+        )
         from .test_embeddings import MockEmbeddings
+
         return MockEmbeddings(dimension=384)
 
 
 class OptimaEmbedder:
     """Generate embeddings and create/load vector indexes."""
 
-    def __init__(self, embedding_model_name: str = "bge-small",
-                 chunk_size: int = 1000, chunk_overlap: int = 200):
+    def __init__(
+        self,
+        embedding_model_name: str = "bge-small",
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200,
+    ):
         self.embedding_spec = resolve_embedding_model(embedding_model_name)
         self.embedding_alias = self.embedding_spec.alias
         self.embedding_model_name = self.embedding_spec.model_name
@@ -169,23 +174,24 @@ class OptimaEmbedder:
     def using_mock_embeddings(self) -> bool:
         return "MockEmbeddings" in str(type(self.embeddings))
 
-    def embed_documents(self, documents: List[Document]) -> List[List[float]]:
+    def embed_documents(self, documents: list[Document]) -> list[list[float]]:
         if not self.embeddings:
             raise RuntimeError("Embeddings model not initialized")
         return self.embeddings.embed_documents([doc.page_content for doc in documents])
 
-    def embed_query(self, query: str) -> List[float]:
+    def embed_query(self, query: str) -> list[float]:
         """Embed queries with the same selected model as the index."""
         if not self.embeddings:
             raise RuntimeError("Embeddings model not initialized")
         return self.embeddings.embed_query(query)
 
-    def create_vector_index(self, documents: List[Document], index_path: Path):
+    def create_vector_index(self, documents: list[Document], index_path: Path):
         if not documents:
             raise ValueError("Cannot create index from empty document list")
         chunked_docs = self.text_splitter.split_documents(documents)
         try:
             from langchain_community.vectorstores import FAISS
+
             vector_store = FAISS.from_documents(chunked_docs, self.embeddings)
             index_path.mkdir(parents=True, exist_ok=True)
             vector_store.save_local(str(index_path))
@@ -201,7 +207,7 @@ class OptimaEmbedder:
                     self.docs, self.k = docs, k
 
                 def get_relevant_documents(self, _query):
-                    return self.docs[:self.k]
+                    return self.docs[: self.k]
 
                 def invoke(self, query):
                     return self.get_relevant_documents(query)
@@ -220,6 +226,7 @@ class OptimaEmbedder:
             return None
         try:
             from langchain_community.vectorstores import FAISS
+
             return FAISS.load_local(
                 str(index_path), self.embeddings, allow_dangerous_deserialization=True
             )
@@ -227,7 +234,7 @@ class OptimaEmbedder:
             logger.warning("Failed to load vector index %s: %s", index_path, exc)
             return None
 
-    def get_embedding_metrics(self, documents: List[Document]) -> Dict[str, Any]:
+    def get_embedding_metrics(self, documents: list[Document]) -> dict[str, Any]:
         total_chars = sum(len(doc.page_content) for doc in documents)
         return {
             "num_documents": len(documents),
@@ -243,17 +250,20 @@ class OptimaEmbedder:
         }
 
 
-def _write_metadata(index_dir: Path, payload: Dict[str, Any]) -> None:
+def _write_metadata(index_dir: Path, payload: dict[str, Any]) -> None:
     index_dir.mkdir(parents=True, exist_ok=True)
     with metadata_path(index_dir).open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=True)
 
 
-def embed_corpus(json_path: Path, enrichment_model: Optional[str],
-                 embedding_model_name: str = "bge-small",
-                 output_base_dir: Path = Path("output/rag_report"),
-                 representation_mode: str = "hybrid",
-                 force: bool = False) -> Dict[str, Any]:
+def embed_corpus(
+    json_path: Path,
+    enrichment_model: str | None,
+    embedding_model_name: str = "bge-small",
+    output_base_dir: Path = Path("output/rag_report"),
+    representation_mode: str = "hybrid",
+    force: bool = False,
+) -> dict[str, Any]:
     """Embed one corpus, skipping an existing canonical index unless forced."""
     start_time = time.time()
     corpus_name = enrichment_model or "raw"
@@ -264,15 +274,20 @@ def embed_corpus(json_path: Path, enrichment_model: Optional[str],
     if persistent_index and not force:
         metadata = _read_metadata(index_dir)
         return {
-            "success": True, "skipped": True, "corpus_name": corpus_name,
-            "corpus_type": corpus_type, "embedding_alias": spec.alias,
-            "embedding_model": spec.model_name, "json_path": str(json_path),
+            "success": True,
+            "skipped": True,
+            "corpus_name": corpus_name,
+            "corpus_type": corpus_type,
+            "embedding_alias": spec.alias,
+            "embedding_model": spec.model_name,
+            "json_path": str(json_path),
             "index_metrics": {"index_path": str(index_dir), "index_size_mb": 0},
             "metadata": metadata,
             "elapsed_time_seconds": round(time.time() - start_time, 2),
         }
 
     from .document_constructor import OptimaDocumentConstructor
+
     documents = OptimaDocumentConstructor(
         representation_mode=representation_mode
     ).construct_documents_from_json(json_path, enrichment_model=enrichment_model)
@@ -286,7 +301,7 @@ def embed_corpus(json_path: Path, enrichment_model: Optional[str],
     chunks = vector_store.index.ntotal if hasattr(vector_store, "index") else 0
     metadata = {
         "schema_version": 1,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "corpus": corpus_name,
         "corpus_type": corpus_type,
         "embedding_alias": spec.alias,
@@ -303,17 +318,23 @@ def embed_corpus(json_path: Path, enrichment_model: Optional[str],
     }
     _write_metadata(index_dir, metadata)
     result = {
-        "success": True, "skipped": False, "corpus_name": corpus_name,
-        "corpus_type": corpus_type, "embedding_alias": spec.alias,
-        "embedding_model": spec.model_name, "json_path": str(json_path),
+        "success": True,
+        "skipped": False,
+        "corpus_name": corpus_name,
+        "corpus_type": corpus_type,
+        "embedding_alias": spec.alias,
+        "embedding_model": spec.model_name,
+        "json_path": str(json_path),
         "num_documents": len(documents),
         "elapsed_time_seconds": round(time.time() - start_time, 2),
         "document_constructor_metrics": {
-            "num_documents": len(documents), "representation_mode": representation_mode
+            "num_documents": len(documents),
+            "representation_mode": representation_mode,
         },
         "embedding_metrics": embedder.get_embedding_metrics(documents),
         "index_metrics": {
-            "index_path": str(index_dir), "index_size_mb": round(index_size_mb, 2),
+            "index_path": str(index_dir),
+            "index_size_mb": round(index_size_mb, 2),
             "num_chunks_in_index": chunks,
         },
         "metadata": metadata,
@@ -322,10 +343,13 @@ def embed_corpus(json_path: Path, enrichment_model: Optional[str],
     return result
 
 
-def embed_all_corpora(output_dir: Path, embedding_model_name: str = "bge-small",
-                      representation_mode: str = "hybrid",
-                      embedding_model_names: Optional[List[str]] = None,
-                      force: bool = False) -> Dict[str, Any]:
+def embed_all_corpora(
+    output_dir: Path,
+    embedding_model_name: str = "bge-small",
+    representation_mode: str = "hybrid",
+    embedding_model_names: list[str] | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
     """Embed all discovered corpora for one or more registry aliases."""
     from .document_constructor import discover_json_files
 
@@ -335,19 +359,26 @@ def embed_all_corpora(output_dir: Path, embedding_model_name: str = "bge-small",
     requested = embedding_model_names or [embedding_model_name]
     aliases = [resolve_embedding_model(item).alias for item in requested]
     report_dir = Path(output_dir) / "rag_report"
-    matrix: Dict[str, Dict[str, Any]] = {}
+    matrix: dict[str, dict[str, Any]] = {}
     for alias in aliases:
         corpus_results = {}
         for corpus_name, json_path in json_files.items():
             try:
                 corpus_results[corpus_name] = embed_corpus(
-                    json_path, None if corpus_name == "base" else corpus_name,
-                    alias, report_dir, representation_mode, force=force
+                    json_path,
+                    None if corpus_name == "base" else corpus_name,
+                    alias,
+                    report_dir,
+                    representation_mode,
+                    force=force,
                 )
             except Exception as exc:
                 corpus_results[corpus_name] = {
-                    "success": False, "error": str(exc), "corpus_name": corpus_name,
-                    "json_path": str(json_path), "embedding_alias": alias,
+                    "success": False,
+                    "error": str(exc),
+                    "corpus_name": corpus_name,
+                    "json_path": str(json_path),
+                    "embedding_alias": alias,
                 }
         matrix[alias] = corpus_results
     summary = {
@@ -355,23 +386,29 @@ def embed_all_corpora(output_dir: Path, embedding_model_name: str = "bge-small",
         "total_corpora": len(json_files),
         "successful": sum(
             result.get("success", False)
-            for corpora in matrix.values() for result in corpora.values()
+            for corpora in matrix.values()
+            for result in corpora.values()
         ),
         "failed": sum(
             not result.get("success", False)
-            for corpora in matrix.values() for result in corpora.values()
+            for corpora in matrix.values()
+            for result in corpora.values()
         ),
     }
-    result: Dict[str, Any] = {
-        "embedding_models": aliases, "representation_mode": representation_mode,
-        "embeddings": matrix, "summary": summary,
+    result: dict[str, Any] = {
+        "embedding_models": aliases,
+        "representation_mode": representation_mode,
+        "embeddings": matrix,
+        "summary": summary,
     }
     # Preserve the old single-model response shape for scripts using it.
     if len(aliases) == 1:
         result.update({"embedding_model": aliases[0], "corpora": matrix[aliases[0]]})
-        summary.update({
-            "successful_corpora": summary["successful"],
-            "failed_corpora": summary["failed"],
-            "total_elapsed_time_seconds": 0,
-        })
+        summary.update(
+            {
+                "successful_corpora": summary["successful"],
+                "failed_corpora": summary["failed"],
+                "total_elapsed_time_seconds": 0,
+            }
+        )
     return result

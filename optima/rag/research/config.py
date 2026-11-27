@@ -12,15 +12,19 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from dataclasses import MISSING, asdict, dataclass, field, fields
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any
 
-REPRESENTATIONS: Tuple[str, ...] = ("raw", "semantic", "compiler", "coupled")
-GRAPH_RELATIONS: Tuple[str, ...] = (
-    "callers", "callees", "dependencies", "enriched_dependencies",
+REPRESENTATIONS: tuple[str, ...] = ("raw", "semantic", "compiler", "coupled")
+GRAPH_RELATIONS: tuple[str, ...] = (
+    "callers",
+    "callees",
+    "dependencies",
+    "enriched_dependencies",
 )
-MISSING_SEMANTIC_POLICIES: Tuple[str, ...] = ("identity", "raw", "exclude")
+MISSING_SEMANTIC_POLICIES: tuple[str, ...] = ("identity", "raw", "exclude")
 CONFIG_SCHEMA_VERSION = 1
 
 
@@ -28,7 +32,7 @@ class ConfigError(ValueError):
     """Raised for an invalid or inconsistent pipeline configuration."""
 
 
-def _tuple_of_str(value: Any, what: str) -> Tuple[str, ...]:
+def _tuple_of_str(value: Any, what: str) -> tuple[str, ...]:
     if isinstance(value, str):
         value = [value]
     try:
@@ -62,7 +66,9 @@ class RepresentationConfig:
 
     def validate(self) -> None:
         if self.coupled_order not in ("semantic_first", "source_first"):
-            raise ConfigError("representation.coupled_order must be 'semantic_first' or 'source_first'")
+            raise ConfigError(
+                "representation.coupled_order must be 'semantic_first' or 'source_first'"
+            )
         if int(self.coupled_max_chars) < 100:
             raise ConfigError("representation.coupled_max_chars must be >= 100")
         for name in ("raw_max_chars", "semantic_max_chars", "compiler_max_chars"):
@@ -78,17 +84,17 @@ class RepresentationConfig:
 class RetrievalConfig:
     """First-stage retrieval: which indexes, how they are queried and fused."""
 
-    representations: Tuple[str, ...] = ("raw",)
+    representations: tuple[str, ...] = ("raw",)
     dense: bool = True
     bm25: bool = False
     exact_match: bool = False
-    candidate_k: int = 50            # candidates drawn from every index/list
-    rrf_k: int = 60                  # RRF damping constant
+    candidate_k: int = 50  # candidates drawn from every index/list
+    rrf_k: int = 60  # RRF damping constant
     dense_weight: float = 1.0
     bm25_weight: float = 1.0
     exact_weight: float = 1.0
     # Optional per-representation RRF weights, e.g. {"semantic": 1.5}.
-    representation_weights: Dict[str, float] = field(default_factory=dict)
+    representation_weights: dict[str, float] = field(default_factory=dict)
     bm25_k1: float = 1.5
     bm25_b: float = 0.75
     # Model-specific instruction prefixes (e.g. nomic's "search_query: ").
@@ -124,12 +130,12 @@ class GraphConfig:
     """Bounded compiler-graph expansion of the first-stage ranking."""
 
     enabled: bool = False
-    relations: Tuple[str, ...] = ("callers", "callees")
+    relations: tuple[str, ...] = ("callers", "callees")
     max_depth: int = 1
-    seed_k: int = 10                 # top-ranked candidates used as seeds
-    max_added: int = 20              # cap on graph-only candidates
+    seed_k: int = 10  # top-ranked candidates used as seeds
+    max_added: int = 20  # cap on graph-only candidates
     max_neighbors_per_node: int = 20  # fan-out cap per visited node
-    graph_weight: float = 0.5        # RRF weight of the graph ordering
+    graph_weight: float = 0.5  # RRF weight of the graph ordering
 
     def validate(self) -> None:
         for rel in self.relations:
@@ -150,12 +156,12 @@ class RerankConfig:
     """Optional cross-encoder reranking of a candidate pool."""
 
     enabled: bool = False
-    model: str = "ms-marco-minilm"   # alias from rerank.RERANKER_REGISTRY or an HF id
+    model: str = "ms-marco-minilm"  # alias from rerank.RERANKER_REGISTRY or an HF id
     pool_size: int = 30
     batch_size: int = 16
     device: str = "auto"
     max_length: int = 512
-    text_representations: Tuple[str, ...] = ("raw",)
+    text_representations: tuple[str, ...] = ("raw",)
     max_chars: int = 1500
 
     def validate(self) -> None:
@@ -174,22 +180,27 @@ class RoutingConfig:
 
     enabled: bool = False
     # class -> {dense_weight, bm25_weight, exact_weight, graph_weight, representation_weights}
-    profiles: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    profiles: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def validate(self) -> None:
         from .routing import CLASSES, PROFILE_KEYS
+
         for cls_name, profile in self.profiles.items():
             if cls_name not in CLASSES:
-                raise ConfigError(f"routing.profiles has unknown class {cls_name!r}; expected {CLASSES}")
+                raise ConfigError(
+                    f"routing.profiles has unknown class {cls_name!r}; expected {CLASSES}"
+                )
             for key, value in dict(profile).items():
                 if key not in PROFILE_KEYS:
-                    raise ConfigError(f"routing.profiles[{cls_name!r}] has unknown key {key!r}; expected {PROFILE_KEYS}")
+                    raise ConfigError(
+                        f"routing.profiles[{cls_name!r}] has unknown key {key!r}; expected {PROFILE_KEYS}"
+                    )
                 values = dict(value).values() if key == "representation_weights" else [value]
                 if any(float(v) < 0 for v in values):
                     raise ConfigError("routing weights must be >= 0")
 
 
-_SECTIONS: Dict[str, type] = {
+_SECTIONS: dict[str, type] = {
     "representation": RepresentationConfig,
     "retrieval": RetrievalConfig,
     "graph": GraphConfig,
@@ -197,25 +208,25 @@ _SECTIONS: Dict[str, type] = {
     "routing": RoutingConfig,
 }
 _TUPLE_FIELDS = {
-    ("retrieval", "representations"), ("graph", "relations"),
+    ("retrieval", "representations"),
+    ("graph", "relations"),
     ("rerank", "text_representations"),
 }
 # Keys that identify/describe a run but do not change what it computes.
-_NON_FUNCTIONAL = ("name", "description", "tags", "base_json", "enriched_json",
-                   "enrichment_model")
+_NON_FUNCTIONAL = ("name", "description", "tags", "base_json", "enriched_json", "enrichment_model")
 
 
 @dataclass(frozen=True)
 class PipelineConfig:
     name: str
     description: str = ""
-    base_json: Optional[str] = None
-    enriched_json: Optional[str] = None
+    base_json: str | None = None
+    enriched_json: str | None = None
     enrichment_model: str = "none"
     embedding_model: str = "bge-small"
     top_k: int = 10
     seed: int = 0
-    tags: Tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
     representation: RepresentationConfig = field(default_factory=RepresentationConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     graph: GraphConfig = field(default_factory=GraphConfig)
@@ -224,7 +235,7 @@ class PipelineConfig:
     schema_version: int = CONFIG_SCHEMA_VERSION
 
     # ------------------------------------------------------------------ checks
-    def validate(self) -> "PipelineConfig":
+    def validate(self) -> PipelineConfig:
         if not self.name or not str(self.name).strip():
             raise ConfigError("pipeline name must not be empty")
         if self.top_k < 1:
@@ -239,9 +250,10 @@ class PipelineConfig:
         self.graph.validate()
         self.rerank.validate()
         self.routing.validate()
-        needs_enrichment = ("semantic" in self.retrieval.representations or "coupled" in self.retrieval.representations) or (
-            self.rerank.enabled and "semantic" in self.rerank.text_representations
-        )
+        needs_enrichment = (
+            "semantic" in self.retrieval.representations
+            or "coupled" in self.retrieval.representations
+        ) or (self.rerank.enabled and "semantic" in self.rerank.text_representations)
         if needs_enrichment and not self.enriched_json:
             raise ConfigError(
                 f"pipeline {self.name!r} uses the semantic representation but "
@@ -252,7 +264,7 @@ class PipelineConfig:
         return self
 
     # ----------------------------------------------------------- serialisation
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         for section, name in _TUPLE_FIELDS:
             data[section][name] = list(data[section][name])
@@ -260,7 +272,7 @@ class PipelineConfig:
         return data
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "PipelineConfig":
+    def from_dict(cls, data: Mapping[str, Any]) -> PipelineConfig:
         if not isinstance(data, Mapping):
             raise ConfigError("pipeline configuration must be a JSON object")
         known = {f.name for f in fields(cls)}
@@ -269,7 +281,7 @@ class PipelineConfig:
             raise ConfigError(f"unknown pipeline config key(s): {unknown}")
         if "name" not in data:
             raise ConfigError("pipeline configuration requires a 'name'")
-        kwargs: Dict[str, Any] = {}
+        kwargs: dict[str, Any] = {}
         for key, value in data.items():
             if key in _SECTIONS:
                 kwargs[key] = _build_section(key, value)
@@ -288,14 +300,19 @@ class PipelineConfig:
         for key in _NON_FUNCTIONAL:
             payload.pop(key, None)
         if "coupled" not in payload.get("retrieval", {}).get("representations", []):
-            for key in ("coupled_order", "coupled_max_chars"):    # irrelevant unless the coupled chunk is used
+            for key in (
+                "coupled_order",
+                "coupled_max_chars",
+            ):  # irrelevant unless the coupled chunk is used
                 payload.get("representation", {}).pop(key, None)
         if not payload.get("routing", {}).get("enabled"):
-            payload.pop("routing", None)       # keeps the hash of every pre-routing configuration unchanged
+            payload.pop(
+                "routing", None
+            )  # keeps the hash of every pre-routing configuration unchanged
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
 
-    def replaced(self, overrides: Mapping[str, Any]) -> "PipelineConfig":
+    def replaced(self, overrides: Mapping[str, Any]) -> PipelineConfig:
         """Return a validated copy with dotted-key overrides, e.g. ``retrieval.bm25``."""
         return PipelineConfig.from_dict(apply_overrides(self.to_dict(), overrides))
 
@@ -323,7 +340,7 @@ def _build_section(key: str, value: Any):
         raise ConfigError(f"invalid '{key}' section: {exc}") from exc
 
 
-def apply_overrides(config: Mapping[str, Any], overrides: Mapping[str, Any]) -> Dict[str, Any]:
+def apply_overrides(config: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
     """Apply ``{"retrieval.bm25": True, "top_k": 5}`` to a config dictionary."""
     result = copy.deepcopy(dict(config))
     for dotted, value in overrides.items():
@@ -352,8 +369,9 @@ def baseline_rag(base_json: str, **overrides: Any) -> PipelineConfig:
     return config.replaced(overrides) if overrides else config.validate()
 
 
-def semantic_enrichment_rag(base_json: str, enriched_json: str, enrichment_model: str = "",
-                            **overrides: Any) -> PipelineConfig:
+def semantic_enrichment_rag(
+    base_json: str, enriched_json: str, enrichment_model: str = "", **overrides: Any
+) -> PipelineConfig:
     """LLM-enriched semantic representation, dense retrieval (BM25 optional)."""
     config = PipelineConfig(
         name="semantic_enrichment_rag",
@@ -367,18 +385,23 @@ def semantic_enrichment_rag(base_json: str, enriched_json: str, enrichment_model
     return config.replaced(overrides) if overrides else config.validate()
 
 
-def compiler_hybrid_rag(base_json: str, enriched_json: str, enrichment_model: str = "",
-                        **overrides: Any) -> PipelineConfig:
+def compiler_hybrid_rag(
+    base_json: str, enriched_json: str, enrichment_model: str = "", **overrides: Any
+) -> PipelineConfig:
     """Raw+semantic+compiler indexes, dense+BM25+RRF, graph expansion, optional rerank."""
     config = PipelineConfig(
         name="compiler_hybrid_rag",
-        description=("Multi-representation dense+BM25 retrieval fused with RRF, "
-                     "bounded call-graph expansion and optional cross-encoder reranking."),
+        description=(
+            "Multi-representation dense+BM25 retrieval fused with RRF, "
+            "bounded call-graph expansion and optional cross-encoder reranking."
+        ),
         base_json=str(base_json),
         enriched_json=str(enriched_json),
         enrichment_model=enrichment_model or Path(str(enriched_json)).stem,
         retrieval=RetrievalConfig(
-            representations=("raw", "semantic", "compiler"), dense=True, bm25=True,
+            representations=("raw", "semantic", "compiler"),
+            dense=True,
+            bm25=True,
             exact_match=True,
         ),
         graph=GraphConfig(enabled=True, relations=("callers", "callees"), max_depth=1),

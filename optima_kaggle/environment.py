@@ -21,7 +21,7 @@ import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .errors import EnvironmentError_, QuantizationUnavailableError
 
@@ -45,7 +45,7 @@ _REQUIRED_PACKAGES: dict[str, str] = {
 _MIN_TRANSFORMERS = (4, 45)
 
 
-def _pkg_version(import_name: str) -> Optional[str]:
+def _pkg_version(import_name: str) -> str | None:
     try:
         module = importlib.import_module(import_name)
     except ImportError:
@@ -70,7 +70,7 @@ def ensure_python_deps(allow_install: bool = True) -> dict[str, Any]:
     already-installed package (transformers is checked for a minimum version
     but is never auto-upgraded).
     """
-    found: dict[str, Optional[str]] = {name: _pkg_version(name) for name in _REQUIRED_PACKAGES}
+    found: dict[str, str | None] = {name: _pkg_version(name) for name in _REQUIRED_PACKAGES}
     missing = [name for name, version in found.items() if version is None]
 
     installed_now: list[str] = []
@@ -85,7 +85,9 @@ def ensure_python_deps(allow_install: bool = True) -> dict[str, Any]:
         print(f"Installing missing packages: {requirements}")
         result = subprocess.run(
             [sys.executable, "-m", "pip", "install", "-q", *requirements],
-            capture_output=True, text=True, timeout=900,
+            capture_output=True,
+            text=True,
+            timeout=900,
         )
         if result.returncode != 0:
             raise EnvironmentError_(
@@ -120,7 +122,7 @@ def ensure_python_deps(allow_install: bool = True) -> dict[str, Any]:
     return report
 
 
-def _cpu_ram_gib() -> Optional[float]:
+def _cpu_ram_gib() -> float | None:
     try:
         with open("/proc/meminfo") as handle:
             for line in handle:
@@ -132,7 +134,7 @@ def _cpu_ram_gib() -> Optional[float]:
     return None
 
 
-def cpu_free_ram_gib() -> Optional[float]:
+def cpu_free_ram_gib() -> float | None:
     """Currently available (not just free) CPU RAM, for CPU-offload budgeting.
 
     ``MemAvailable`` (not ``MemFree``) is used because it already accounts
@@ -159,7 +161,7 @@ def _internet_reachable(url: str = "https://huggingface.co", timeout: float = 5.
         return False
 
 
-def diagnose(hf_home: Optional[str] = None, working_dir: str = "/kaggle/working") -> dict[str, Any]:
+def diagnose(hf_home: str | None = None, working_dir: str = "/kaggle/working") -> dict[str, Any]:
     """Report the environment and hard-stop if CUDA is unavailable."""
     import platform
 
@@ -189,35 +191,47 @@ def diagnose(hf_home: Optional[str] = None, working_dir: str = "/kaggle/working"
     for i in range(num_gpus):
         props = torch.cuda.get_device_properties(i)
         free_bytes, total_bytes = torch.cuda.mem_get_info(i)
-        gpus.append({
-            "index": i, "name": props.name,
-            "compute_capability": f"{props.major}.{props.minor}",
-            "total_vram_gib": round(total_bytes / (1024 ** 3), 3),
-            "free_vram_gib": round(free_bytes / (1024 ** 3), 3),
-        })
-    info.update({
-        "num_gpus": num_gpus, "multi_gpu_capable": num_gpus > 1, "gpus": gpus,
-        # Back-compat single-GPU convenience fields, mirroring GPU 0.
-        "gpu_name": gpus[0]["name"] if gpus else None,
-        "compute_capability": gpus[0]["compute_capability"] if gpus else None,
-        "gpu_total_vram_gib": gpus[0]["total_vram_gib"] if gpus else None,
-        "gpu_free_vram_gib": gpus[0]["free_vram_gib"] if gpus else None,
-    })
+        gpus.append(
+            {
+                "index": i,
+                "name": props.name,
+                "compute_capability": f"{props.major}.{props.minor}",
+                "total_vram_gib": round(total_bytes / (1024**3), 3),
+                "free_vram_gib": round(free_bytes / (1024**3), 3),
+            }
+        )
+    info.update(
+        {
+            "num_gpus": num_gpus,
+            "multi_gpu_capable": num_gpus > 1,
+            "gpus": gpus,
+            # Back-compat single-GPU convenience fields, mirroring GPU 0.
+            "gpu_name": gpus[0]["name"] if gpus else None,
+            "compute_capability": gpus[0]["compute_capability"] if gpus else None,
+            "gpu_total_vram_gib": gpus[0]["total_vram_gib"] if gpus else None,
+            "gpu_free_vram_gib": gpus[0]["free_vram_gib"] if gpus else None,
+        }
+    )
 
-    for label, path in (("working_dir", working_dir), ("hf_home", hf_home or os.environ.get("HF_HOME", ""))):
+    for label, path in (
+        ("working_dir", working_dir),
+        ("hf_home", hf_home or os.environ.get("HF_HOME", "")),
+    ):
         if path:
             try:
                 usage = shutil.disk_usage(path if Path(path).exists() else Path(path).parent)
-                info[f"{label}_disk_free_gib"] = round(usage.free / (1024 ** 3), 2)
+                info[f"{label}_disk_free_gib"] = round(usage.free / (1024**3), 2)
             except OSError:
                 info[f"{label}_disk_free_gib"] = None
 
     for key, value in info.items():
         if key == "gpus":
             for gpu in value:
-                print(f"  gpu[{gpu['index']}]                   {gpu['name']}, "
-                      f"cc={gpu['compute_capability']}, "
-                      f"free={gpu['free_vram_gib']}/{gpu['total_vram_gib']} GiB")
+                print(
+                    f"  gpu[{gpu['index']}]                   {gpu['name']}, "
+                    f"cc={gpu['compute_capability']}, "
+                    f"free={gpu['free_vram_gib']}/{gpu['total_vram_gib']} GiB"
+                )
             continue
         print(f"  {key:<26} {value}")
     return info
@@ -226,7 +240,7 @@ def diagnose(hf_home: Optional[str] = None, working_dir: str = "/kaggle/working"
 @dataclass
 class BnbStatus:
     ok: bool
-    version: Optional[str]
+    version: str | None
     stage: str
     message: str
     stdout_tail: str = ""
@@ -274,21 +288,40 @@ def probe_bitsandbytes(allow_install: bool = True, min_version: str = "0.43.0") 
 
     if version is None:
         if not allow_install:
-            return BnbStatus(False, None, "not_installed",
-                              "bitsandbytes is not installed and allow_install=False.")
-        pre = subprocess.run([sys.executable, "-c", "import torch; print(torch.__version__)"],
-                              capture_output=True, text=True, timeout=60)
+            return BnbStatus(
+                False,
+                None,
+                "not_installed",
+                "bitsandbytes is not installed and allow_install=False.",
+            )
+        pre = subprocess.run(
+            [sys.executable, "-c", "import torch; print(torch.__version__)"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
         torch_before = pre.stdout.strip()
         result = subprocess.run(
             [sys.executable, "-m", "pip", "install", "-q", "bitsandbytes>=0.45.0"],
-            capture_output=True, text=True, timeout=600,
+            capture_output=True,
+            text=True,
+            timeout=600,
         )
         if result.returncode != 0:
-            return BnbStatus(False, None, "install_failed",
-                              "pip install bitsandbytes failed.",
-                              result.stdout[-2000:], result.stderr[-2000:])
-        post = subprocess.run([sys.executable, "-c", "import torch; print(torch.__version__)"],
-                               capture_output=True, text=True, timeout=60)
+            return BnbStatus(
+                False,
+                None,
+                "install_failed",
+                "pip install bitsandbytes failed.",
+                result.stdout[-2000:],
+                result.stderr[-2000:],
+            )
+        post = subprocess.run(
+            [sys.executable, "-c", "import torch; print(torch.__version__)"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
         torch_after = post.stdout.strip()
         if torch_before and torch_after and torch_before != torch_after:
             raise QuantizationUnavailableError(
@@ -301,12 +334,15 @@ def probe_bitsandbytes(allow_install: bool = True, min_version: str = "0.43.0") 
         try:
             version = importlib.metadata.version("bitsandbytes")
         except importlib.metadata.PackageNotFoundError:
-            return BnbStatus(False, None, "install_failed",
-                              "bitsandbytes still not importable after install.")
+            return BnbStatus(
+                False, None, "install_failed", "bitsandbytes still not importable after install."
+            )
 
     if _parse_version(version) < _parse_version(min_version):
         return BnbStatus(
-            False, version, "too_old",
+            False,
+            version,
+            "too_old",
             f"bitsandbytes=={version} is older than the required {min_version}+. "
             f"This tool will not upgrade it automatically. If you want nf4, run: "
             f"pip install -q -U 'bitsandbytes>=0.45.0' and restart the session.",
@@ -314,7 +350,9 @@ def probe_bitsandbytes(allow_install: bool = True, min_version: str = "0.43.0") 
 
     probe = subprocess.run(
         [sys.executable, "-c", _BNB_PROBE_SCRIPT],
-        capture_output=True, text=True, timeout=180,
+        capture_output=True,
+        text=True,
+        timeout=180,
     )
     stdout_tail = probe.stdout[-2000:]
     stderr_tail = probe.stderr[-2000:]
@@ -326,29 +364,46 @@ def probe_bitsandbytes(allow_install: bool = True, min_version: str = "0.43.0") 
             pass
         error = payload.get("error", "no diagnostic output; see stderr_tail")
         stage = "cuda_kernel_failed" if "CUDA" in error or "cuda" in error else "import_failed"
-        return BnbStatus(False, version, stage,
-                          f"bitsandbytes functional probe failed: {error}",
-                          stdout_tail, stderr_tail)
+        return BnbStatus(
+            False,
+            version,
+            stage,
+            f"bitsandbytes functional probe failed: {error}",
+            stdout_tail,
+            stderr_tail,
+        )
 
     try:
         payload = json.loads(probe.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
-        return BnbStatus(False, version, "import_failed",
-                          "bitsandbytes probe produced no parsable output.",
-                          stdout_tail, stderr_tail)
+        return BnbStatus(
+            False,
+            version,
+            "import_failed",
+            "bitsandbytes probe produced no parsable output.",
+            stdout_tail,
+            stderr_tail,
+        )
 
     try:
         from transformers.utils import is_bitsandbytes_available
+
         if not is_bitsandbytes_available():
-            return BnbStatus(False, version, "transformers_incompatible",
-                              "transformers.utils.is_bitsandbytes_available() is "
-                              "False even though the subprocess probe passed.",
-                              stdout_tail, stderr_tail)
+            return BnbStatus(
+                False,
+                version,
+                "transformers_incompatible",
+                "transformers.utils.is_bitsandbytes_available() is "
+                "False even though the subprocess probe passed.",
+                stdout_tail,
+                stderr_tail,
+            )
     except ImportError:
         pass
 
-    return BnbStatus(True, version, "ok", "bitsandbytes nf4 is usable on this GPU.",
-                      stdout_tail, stderr_tail)
+    return BnbStatus(
+        True, version, "ok", "bitsandbytes nf4 is usable on this GPU.", stdout_tail, stderr_tail
+    )
 
 
 def require_bitsandbytes(status: BnbStatus, spec_slug: str) -> None:
@@ -364,7 +419,7 @@ def require_bitsandbytes(status: BnbStatus, spec_slug: str) -> None:
     )
 
 
-def gpu_report(label: str, log_path: Optional[Path] = None) -> dict[str, Any]:
+def gpu_report(label: str, log_path: Path | None = None) -> dict[str, Any]:
     """Print current GPU memory stats for every visible GPU (plus an
     aggregate) and optionally append the record to a jsonl log.
 
@@ -388,14 +443,16 @@ def gpu_report(label: str, log_path: Optional[Path] = None) -> dict[str, Any]:
     gpus = []
     for i in range(num_gpus):
         free_bytes, total_bytes = torch.cuda.mem_get_info(i)
-        gpus.append({
-            "index": i,
-            "allocated_gib": round(torch.cuda.memory_allocated(i) / (1024 ** 3), 4),
-            "reserved_gib": round(torch.cuda.memory_reserved(i) / (1024 ** 3), 4),
-            "max_allocated_gib": round(torch.cuda.max_memory_allocated(i) / (1024 ** 3), 4),
-            "free_gib": round(free_bytes / (1024 ** 3), 4),
-            "total_gib": round(total_bytes / (1024 ** 3), 4),
-        })
+        gpus.append(
+            {
+                "index": i,
+                "allocated_gib": round(torch.cuda.memory_allocated(i) / (1024**3), 4),
+                "reserved_gib": round(torch.cuda.memory_reserved(i) / (1024**3), 4),
+                "max_allocated_gib": round(torch.cuda.max_memory_allocated(i) / (1024**3), 4),
+                "free_gib": round(free_bytes / (1024**3), 4),
+                "total_gib": round(total_bytes / (1024**3), 4),
+            }
+        )
     aggregate = {
         "allocated_gib": round(sum(g["allocated_gib"] for g in gpus), 4),
         "reserved_gib": round(sum(g["reserved_gib"] for g in gpus), 4),
@@ -409,8 +466,10 @@ def gpu_report(label: str, log_path: Optional[Path] = None) -> dict[str, Any]:
         f"gpu{g['index']}: alloc={g['allocated_gib']} free={g['free_gib']}/{g['total_gib']}"
         for g in gpus
     )
-    print(f"[gpu:{label}] {per_gpu_text} || total_alloc={aggregate['allocated_gib']}, "
-          f"min_free={aggregate['free_gib']}")
+    print(
+        f"[gpu:{label}] {per_gpu_text} || total_alloc={aggregate['allocated_gib']}, "
+        f"min_free={aggregate['free_gib']}"
+    )
     if log_path is not None:
         log_path = Path(log_path)
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -431,7 +490,7 @@ def assert_gpu_clean(threshold_gib: float = 0.3) -> None:
 
     dirty = []
     for i in range(torch.cuda.device_count()):
-        allocated_gib = torch.cuda.memory_allocated(i) / (1024 ** 3)
+        allocated_gib = torch.cuda.memory_allocated(i) / (1024**3)
         if allocated_gib >= threshold_gib:
             dirty.append((i, round(allocated_gib, 3)))
     if not dirty:
@@ -440,7 +499,11 @@ def assert_gpu_clean(threshold_gib: float = 0.3) -> None:
     try:
         for obj in gc.get_objects():
             type_name = type(obj).__name__
-            if type_name in ("PreTrainedModel",) or "Model" in type_name and hasattr(obj, "parameters"):
+            if (
+                type_name in ("PreTrainedModel",)
+                or "Model" in type_name
+                and hasattr(obj, "parameters")
+            ):
                 culprits.append(type_name)
     except Exception:  # noqa: BLE001 - best-effort diagnostic only
         pass
@@ -457,4 +520,4 @@ def assert_gpu_clean(threshold_gib: float = 0.3) -> None:
 def disk_free_gib(path: str | Path) -> float:
     path = Path(path)
     usage = shutil.disk_usage(path if path.exists() else path.parent)
-    return round(usage.free / (1024 ** 3), 3)
+    return round(usage.free / (1024**3), 3)

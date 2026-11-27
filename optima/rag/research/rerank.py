@@ -19,8 +19,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -42,18 +43,30 @@ class RerankerSpec:
     hardware: str
 
 
-RERANKER_REGISTRY: Dict[str, RerankerSpec] = {
+RERANKER_REGISTRY: dict[str, RerankerSpec] = {
     "ms-marco-minilm": RerankerSpec(
-        "ms-marco-minilm", "cross-encoder/ms-marco-MiniLM-L6-v2", "Apache-2.0", 22.7,
+        "ms-marco-minilm",
+        "cross-encoder/ms-marco-MiniLM-L6-v2",
+        "Apache-2.0",
+        22.7,
         "~90 MB download; runs comfortably on CPU, trivial on GPU. Trained on MS MARCO "
-        "web passages, not on code."),
+        "web passages, not on code.",
+    ),
     "bge-reranker-base": RerankerSpec(
-        "bge-reranker-base", "BAAI/bge-reranker-base", "MIT", 278.0,
+        "bge-reranker-base",
+        "BAAI/bge-reranker-base",
+        "MIT",
+        278.0,
         "~1.1 GB download; CPU is slow (seconds per query pool), <2 GB VRAM on GPU. "
-        "Multilingual relevance model, not code-specific."),
+        "Multilingual relevance model, not code-specific.",
+    ),
     "bge-reranker-v2-m3": RerankerSpec(
-        "bge-reranker-v2-m3", "BAAI/bge-reranker-v2-m3", "Apache-2.0", 567.8,
-        "~2.3 GB download; GPU recommended (~3 GB VRAM). Multilingual, not code-specific."),
+        "bge-reranker-v2-m3",
+        "BAAI/bge-reranker-v2-m3",
+        "Apache-2.0",
+        567.8,
+        "~2.3 GB download; GPU recommended (~3 GB VRAM). Multilingual, not code-specific.",
+    ),
 }
 
 
@@ -69,7 +82,7 @@ def resolve_reranker(model_or_alias: str) -> RerankerSpec:
 
 
 _LOAD_LOCK = threading.Lock()
-_LOADED: Dict[Tuple[str, str, int], Any] = {}
+_LOADED: dict[tuple[str, str, int], Any] = {}
 
 
 def _resolve_device(device: str) -> str:
@@ -77,6 +90,7 @@ def _resolve_device(device: str) -> str:
         return device
     try:
         import torch
+
         return "cuda" if torch.cuda.is_available() else "cpu"
     except ImportError:
         return "cpu"
@@ -85,16 +99,21 @@ def _resolve_device(device: str) -> str:
 class CrossEncoderReranker:
     """Lazily-loaded cross-encoder.  ``predict_fn`` injects a scorer for tests."""
 
-    def __init__(self, model_or_alias: str, device: str = "auto", batch_size: int = 16,
-                 max_length: int = 512,
-                 predict_fn: Optional[Callable[[List[Tuple[str, str]]], Sequence[float]]] = None):
+    def __init__(
+        self,
+        model_or_alias: str,
+        device: str = "auto",
+        batch_size: int = 16,
+        max_length: int = 512,
+        predict_fn: Callable[[list[tuple[str, str]]], Sequence[float]] | None = None,
+    ):
         self.spec = resolve_reranker(model_or_alias)
         self.device = _resolve_device(device)
         self.batch_size, self.max_length = batch_size, max_length
         self._predict_fn = predict_fn
         self._model: Any = None
-        self.load_seconds: Optional[float] = None
-        self.error: Optional[str] = None
+        self.load_seconds: float | None = None
+        self.error: str | None = None
 
     # ------------------------------------------------------------------ loading
     def load(self) -> None:
@@ -110,8 +129,10 @@ class CrossEncoderReranker:
             start = time.perf_counter()
             try:
                 from sentence_transformers import CrossEncoder
-                model = CrossEncoder(self.spec.model_name, device=self.device,
-                                     max_length=self.max_length)
+
+                model = CrossEncoder(
+                    self.spec.model_name, device=self.device, max_length=self.max_length
+                )
             except ImportError as exc:
                 self.error = "sentence-transformers is not installed"
                 raise RerankerUnavailable(
@@ -128,15 +149,21 @@ class CrossEncoderReranker:
             _LOADED[key] = self._model = model
 
     @property
-    def info(self) -> Dict[str, Any]:
-        return {"alias": self.spec.alias, "model_name": self.spec.model_name,
-                "license": self.spec.license, "parameters_m": self.spec.parameters_m,
-                "hardware": self.spec.hardware, "device": self.device,
-                "batch_size": self.batch_size, "max_length": self.max_length,
-                "load_seconds": self.load_seconds}
+    def info(self) -> dict[str, Any]:
+        return {
+            "alias": self.spec.alias,
+            "model_name": self.spec.model_name,
+            "license": self.spec.license,
+            "parameters_m": self.spec.parameters_m,
+            "hardware": self.spec.hardware,
+            "device": self.device,
+            "batch_size": self.batch_size,
+            "max_length": self.max_length,
+            "load_seconds": self.load_seconds,
+        }
 
     # ------------------------------------------------------------------ scoring
-    def score(self, query: str, documents: Sequence[str]) -> List[float]:
+    def score(self, query: str, documents: Sequence[str]) -> list[float]:
         if not documents:
             return []
         self.load()
@@ -145,24 +172,26 @@ class CrossEncoderReranker:
             if self._predict_fn is not None:
                 scores = list(self._predict_fn(pairs))
             else:
-                scores = list(self._model.predict(
-                    pairs, batch_size=self.batch_size, show_progress_bar=False))
+                scores = list(
+                    self._model.predict(pairs, batch_size=self.batch_size, show_progress_bar=False)
+                )
         except Exception as exc:
             raise RerankerError(f"{type(exc).__name__}: {exc}") from exc
         if len(scores) != len(pairs):
             raise RerankerError(f"scorer returned {len(scores)} scores for {len(pairs)} pairs")
         return [float(s) for s in scores]
 
-    def rerank(self, query: str, candidates: Sequence[Tuple[str, str]]) -> List[Tuple[str, float]]:
+    def rerank(self, query: str, candidates: Sequence[tuple[str, str]]) -> list[tuple[str, float]]:
         """Return ``(id, score)`` best first.  Equal scores keep their input order."""
         scores = self.score(query, [text for _, text in candidates])
         ranked = sorted(range(len(candidates)), key=lambda i: (-round(scores[i], 9), i))
         return [(candidates[i][0], scores[i]) for i in ranked]
 
-    def gpu_peak_mb(self) -> Optional[float]:
+    def gpu_peak_mb(self) -> float | None:
         if self.device.startswith("cuda"):
             try:
                 import torch
+
                 return torch.cuda.max_memory_allocated() / (1024 * 1024)
             except Exception:  # pragma: no cover - torch optional
                 return None

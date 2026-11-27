@@ -23,13 +23,27 @@ class EmbeddingRegistryTests(unittest.TestCase):
             shutil.rmtree(cls.root)
         cls.root.mkdir(parents=True)
         cls.json_path = cls.root / "base.json"
-        cls.json_path.write_text(json.dumps({
-            "project": {"name": "test"},
-            "files": [{"path": "x.cpp", "functions": [{
-                "id": "x.cpp::f::1", "name": "f", "qualified_name": "f",
-                "source_code": "int f() { return 1; }"
-            }]}]
-        }), encoding="utf-8")
+        cls.json_path.write_text(
+            json.dumps(
+                {
+                    "project": {"name": "test"},
+                    "files": [
+                        {
+                            "path": "x.cpp",
+                            "functions": [
+                                {
+                                    "id": "x.cpp::f::1",
+                                    "name": "f",
+                                    "qualified_name": "f",
+                                    "source_code": "int f() { return 1; }",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
         register_embedding_model("test-mock", "mock")
 
     @classmethod
@@ -55,10 +69,14 @@ class EmbeddingRegistryTests(unittest.TestCase):
 
     def test_weighted_score(self):
         self.assertAlmostEqual(
-            weighted_overall_score({
-                "mrr": 1, "recall_at_5": 0.8,
-                "hit_rate_at_5": 0.6, "precision_at_5": 0.4,
-            }),
+            weighted_overall_score(
+                {
+                    "mrr": 1,
+                    "recall_at_5": 0.8,
+                    "hit_rate_at_5": 0.6,
+                    "precision_at_5": 0.4,
+                }
+            ),
             0.76,
         )
 

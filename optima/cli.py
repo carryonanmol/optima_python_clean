@@ -5,8 +5,8 @@ Optima CLI - LM Studio LLM enrichment tool
 
 import argparse
 import sys
-import os
 from pathlib import Path
+
 from .analyzer import analyze_project, safe_slug
 from .enricher import enrich_analysis
 
@@ -15,131 +15,126 @@ from .enricher import enrich_analysis
 # never overwrites the first. Only used when -o/--output is omitted.
 DEFAULT_BASE_OUTPUT_ROOT = Path("optima_outputs") / "base"
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Optima: LM Studio LLM enrichment tool for code analysis"
     )
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
-    
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
     # analyze command
     analyze_parser = subparsers.add_parser(
-        'analyze', 
-        help='Analyze a project and generate base.json'
+        "analyze", help="Analyze a project and generate base.json"
     )
+    analyze_parser.add_argument("project_path", help="Path to the project to analyze")
     analyze_parser.add_argument(
-        'project_path',
-        help='Path to the project to analyze'
-    )
-    analyze_parser.add_argument(
-        '-o', '--output',
+        "-o",
+        "--output",
         default=None,
         help=(
-            'Output directory (default: optima_outputs/base/<test-suite>, '
-            'where <test-suite> is a safe slug of the project directory name)'
-        )
+            "Output directory (default: optima_outputs/base/<test-suite>, "
+            "where <test-suite> is a safe slug of the project directory name)"
+        ),
     )
     analyze_parser.add_argument(
-        '-v', '--verbose',
-        action='store_true',
+        "-v",
+        "--verbose",
+        action="store_true",
         help=(
-            'Print a line per file and every clang parse diagnostic instead of '
-            'a single updating progress line. On large projects (thousands of '
-            'files) the default quiet mode avoids flooding the terminal.'
-        )
+            "Print a line per file and every clang parse diagnostic instead of "
+            "a single updating progress line. On large projects (thousands of "
+            "files) the default quiet mode avoids flooding the terminal."
+        ),
     )
     analyze_parser.add_argument(
-        '--exclude',
-        nargs='+',
+        "--exclude",
+        nargs="+",
         default=None,
-        metavar='DIR',
+        metavar="DIR",
         help=(
-            'Directory name(s) to skip at any depth under project_path '
-            '(e.g. --exclude test fuzz demos). Matched case-insensitively '
-            'against the bare directory name.'
-        )
+            "Directory name(s) to skip at any depth under project_path "
+            "(e.g. --exclude test fuzz demos). Matched case-insensitively "
+            "against the bare directory name."
+        ),
     )
     analyze_parser.add_argument(
-        '--checkpoint-every',
+        "--checkpoint-every",
         type=int,
         default=20,
-        metavar='N',
+        metavar="N",
         help=(
-            'Rewrite base.json to disk after every N files (default: 20), '
-            'not only once at the end, so a crash partway through a large '
-            'project loses at most the last N files instead of everything. '
-            '0 disables checkpointing (only writes once, at the end).'
-        )
+            "Rewrite base.json to disk after every N files (default: 20), "
+            "not only once at the end, so a crash partway through a large "
+            "project loses at most the last N files instead of everything. "
+            "0 disables checkpointing (only writes once, at the end)."
+        ),
     )
 
     # enrich command
     enrich_parser = subparsers.add_parser(
-        'enrich', 
-        help='Enrich base.json with LM Studio to produce enhanced.json'
+        "enrich", help="Enrich base.json with LM Studio to produce enhanced.json"
+    )
+    enrich_parser.add_argument("base_json", help="Path to base.json file to enrich")
+    enrich_parser.add_argument(
+        "-o",
+        "--output",
+        default="output",
+        help="Output directory or explicit JSON output path (default: output)",
     )
     enrich_parser.add_argument(
-        'base_json',
-        help='Path to base.json file to enrich'
-    )
-    enrich_parser.add_argument(
-        '-o', '--output',
-        default='output',
-        help='Output directory or explicit JSON output path (default: output)'
-    )
-    enrich_parser.add_argument(
-        '--model',
+        "--model",
         default=None,
-        help='LM Studio model ID; otherwise discover the first available model'
+        help="LM Studio model ID; otherwise discover the first available model",
     )
     enrich_parser.add_argument(
-        '--base-url',
-        default='http://localhost:1234/v1',
-        help='LM Studio OpenAI-compatible API base URL'
+        "--base-url",
+        default="http://localhost:1234/v1",
+        help="LM Studio OpenAI-compatible API base URL",
     )
     enrich_parser.add_argument(
-        '--model-load-timeout',
+        "--model-load-timeout",
         type=int,
         default=300,
-        help='Seconds to wait for the selected model to become ready'
+        help="Seconds to wait for the selected model to become ready",
     )
     enrich_parser.add_argument(
-        '--limit',
+        "--limit",
         type=int,
         default=None,
-        help='Process at most this many functions (useful for smoke tests)'
+        help="Process at most this many functions (useful for smoke tests)",
     )
     enrich_parser.add_argument(
-        '--context-size',
+        "--context-size",
         type=int,
         default=None,
-        help='Model context size in tokens (discovered from LM Studio when omitted)'
+        help="Model context size in tokens (discovered from LM Studio when omitted)",
     )
     enrich_parser.add_argument(
-        '--max-input-tokens',
+        "--max-input-tokens",
         type=int,
         default=None,
-        help='Maximum input tokens; defaults to the model context minus reserved output'
+        help="Maximum input tokens; defaults to the model context minus reserved output",
     )
     enrich_parser.add_argument(
-        '--reserved-output-tokens',
+        "--reserved-output-tokens",
         type=int,
         default=2048,
-        help='Tokens reserved for the enrichment response (default: 2048)'
+        help="Tokens reserved for the enrichment response (default: 2048)",
     )
     enrich_parser.add_argument(
-        '--debug',
-        action='store_true',
-        help='Print context preflight and reduction details'
+        "--debug", action="store_true", help="Print context preflight and reduction details"
     )
-    
+
     args = parser.parse_args()
-    
-    if args.command == 'analyze':
+
+    if args.command == "analyze":
         return analyze_command(args)
-    elif args.command == 'enrich':
+    elif args.command == "enrich":
         return enrich_command(args)
     else:
         parser.print_help()
         return 1
+
 
 def analyze_command(args):
     """Handle the analyze subcommand"""
@@ -159,7 +154,11 @@ def analyze_command(args):
         output_dir = (Path.cwd() / DEFAULT_BASE_OUTPUT_ROOT / test_suite).resolve()
     else:
         requested_output = Path(args.output).resolve()
-        output_dir = requested_output if requested_output.suffix.lower() != '.json' else requested_output.parent
+        output_dir = (
+            requested_output
+            if requested_output.suffix.lower() != ".json"
+            else requested_output.parent
+        )
 
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -167,46 +166,52 @@ def analyze_command(args):
     print(f"Analyzing project: {project_path}")
     print(f"Test suite: {test_suite}")
     print(f"Output directory: {output_dir}")
-    
+
     try:
         base_json_path = analyze_project(
-            project_path, output_dir, verbose=args.verbose, exclude_dirs=args.exclude,
+            project_path,
+            output_dir,
+            verbose=args.verbose,
+            exclude_dirs=args.exclude,
             checkpoint_every=args.checkpoint_every,
         )
         print(f"Analysis complete. Base JSON saved to: {base_json_path}")
-        print(f"To enrich with LM Studio, run:")
+        print("To enrich with LM Studio, run:")
         print(f"  optima enrich {base_json_path}")
         return 0
     except Exception as e:
         print(f"Error during analysis: {e}", file=sys.stderr)
         return 1
 
+
 def enrich_command(args):
     """Handle the enrich subcommand"""
     base_json_path = Path(args.base_json).resolve()
     requested_output = Path(args.output).resolve()
-    output_dir = requested_output if requested_output.suffix.lower() != '.json' else requested_output.parent
-    
+    output_dir = (
+        requested_output if requested_output.suffix.lower() != ".json" else requested_output.parent
+    )
+
     if not base_json_path.exists():
         print(f"Error: Base JSON file '{base_json_path}' does not exist", file=sys.stderr)
         return 1
-    
+
     if not base_json_path.is_file():
         print(f"Error: Base JSON path '{base_json_path}' is not a file", file=sys.stderr)
         return 1
-    
+
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     print(f"Enriching: {base_json_path}")
     print(f"Output directory: {output_dir}")
-    
+
     try:
         enhanced_json_path = enrich_analysis(
             base_json_path,
             output_dir,
             model=args.model,
-            output_path=requested_output if requested_output.suffix.lower() == '.json' else None,
+            output_path=requested_output if requested_output.suffix.lower() == ".json" else None,
             base_url=args.base_url,
             model_load_timeout=args.model_load_timeout,
             limit=args.limit,
@@ -221,5 +226,6 @@ def enrich_command(args):
         print(f"Error during enrichment: {e}", file=sys.stderr)
         return 1
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     sys.exit(main())

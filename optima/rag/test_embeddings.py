@@ -3,9 +3,9 @@ Test embeddings module for when sentence-transformers/torch are not available.
 Provides a simple mock embedding for testing the RAG pipeline structure.
 """
 
-import logging
 import hashlib
-from typing import List
+import logging
+
 from langchain_core.embeddings import Embeddings
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class MockEmbeddings(Embeddings):
         self.dimension = dimension
         logger.info(f"Initialized MockEmbeddings with dimension {dimension}")
 
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """
         Create mock embeddings for documents.
 
@@ -53,7 +53,7 @@ class MockEmbeddings(Embeddings):
 
         return embeddings
 
-    def embed_query(self, text: str) -> List[float]:
+    def embed_query(self, text: str) -> list[float]:
         """
         Create mock embedding for a query.
 
@@ -74,7 +74,7 @@ if __name__ == "__main__":
     test_texts = [
         "This is a test function.",
         "Another test function with different content.",
-        "Yet another function for testing purposes."
+        "Yet another function for testing purposes.",
     ]
 
     # Test document embeddings

@@ -22,23 +22,29 @@ import json
 import logging
 import os
 import platform
-import statistics
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any
 
 import numpy as np
 
 from .benchmark import Benchmark, validate_benchmark
 from .config import PipelineConfig
-from .corpus import Corpus, load_corpus
+from .corpus import Corpus
 from .dense import EmbeddingCache, EmbeddingUnavailable
-from .metrics import (HEADLINE_METRICS, METRIC_NAMES, bootstrap_mean_ci, by_category,
-                      evaluate_query, mean_metrics, relevance_map)
+from .metrics import (
+    HEADLINE_METRICS,
+    bootstrap_mean_ci,
+    by_category,
+    evaluate_query,
+    mean_metrics,
+    relevance_map,
+)
 from .pipeline import QueryResult, ResearchPipeline
 from .rerank import RerankerUnavailable
 
@@ -55,31 +61,35 @@ class ResourceMonitor:
         self.interval = interval
         self.peak_rss_mb = 0.0
         self.start_rss_mb = 0.0
-        self.gpu_peak_mb: Optional[float] = None
+        self.gpu_peak_mb: float | None = None
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._proc = None
 
     def _rss_mb(self) -> float:
         return self._proc.memory_info().rss / (1024 * 1024) if self._proc else 0.0
 
-    def __enter__(self) -> "ResourceMonitor":
+    def __enter__(self) -> ResourceMonitor:
         try:
             import psutil
+
             self._proc = psutil.Process(os.getpid())
         except ImportError:
             self._proc = None
         self.start_rss_mb = self.peak_rss_mb = self._rss_mb()
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.reset_peak_memory_stats()
         except Exception:  # torch optional
             pass
         if self._proc is not None:
+
             def sample() -> None:
                 while not self._stop.wait(self.interval):
                     self.peak_rss_mb = max(self.peak_rss_mb, self._rss_mb())
+
             self._thread = threading.Thread(target=sample, daemon=True)
             self._thread.start()
         return self
@@ -91,20 +101,29 @@ class ResourceMonitor:
         self.peak_rss_mb = max(self.peak_rss_mb, self._rss_mb())
         try:
             import torch
+
             if torch.cuda.is_available():
                 self.gpu_peak_mb = torch.cuda.max_memory_allocated() / (1024 * 1024)
         except Exception:
             pass
 
-    def as_dict(self) -> Dict[str, Any]:
-        return {"rss_start_mb": round(self.start_rss_mb, 1), "rss_peak_mb": round(self.peak_rss_mb, 1),
-                "gpu_peak_allocated_mb": None if self.gpu_peak_mb is None else round(self.gpu_peak_mb, 1),
-                "note": "RSS is process-wide (includes cached corpora/models from earlier runs)"}
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "rss_start_mb": round(self.start_rss_mb, 1),
+            "rss_peak_mb": round(self.peak_rss_mb, 1),
+            "gpu_peak_allocated_mb": None
+            if self.gpu_peak_mb is None
+            else round(self.gpu_peak_mb, 1),
+            "note": "RSS is process-wide (includes cached corpora/models from earlier runs)",
+        }
 
 
-def environment_info() -> Dict[str, Any]:
-    info: Dict[str, Any] = {"python": sys.version.split()[0], "platform": platform.platform(),
-                            "cpu_count": os.cpu_count()}
+def environment_info() -> dict[str, Any]:
+    info: dict[str, Any] = {
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+        "cpu_count": os.cpu_count(),
+    }
     for module in ("numpy", "torch", "sentence_transformers", "transformers", "faiss"):
         try:
             info[module] = __import__(module).__version__
@@ -112,55 +131,92 @@ def environment_info() -> Dict[str, Any]:
             info[module] = None
     try:
         import torch
+
         if torch.cuda.is_available():
             info["gpu"] = torch.cuda.get_device_name(0)
     except Exception:
         pass
     try:
         import subprocess
-        info["git_commit"] = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5,
-            cwd=Path(__file__).resolve().parents[3]).stdout.strip() or None
+
+        info["git_commit"] = (
+            subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                cwd=Path(__file__).resolve().parents[3],
+            ).stdout.strip()
+            or None
+        )
     except Exception:
         info["git_commit"] = None
     return info
 
 
 # --------------------------------------------------------------------- stats
-def _latency_stats(values: Sequence[float]) -> Dict[str, Optional[float]]:
+def _latency_stats(values: Sequence[float]) -> dict[str, float | None]:
     if not values:
         return {"mean": None, "median": None, "p95": None, "max": None, "n": 0}
     arr = np.asarray(values, dtype=float)
-    return {"mean": round(float(arr.mean()), 4), "median": round(float(np.median(arr)), 4),
-            "p95": round(float(np.percentile(arr, 95)), 4), "max": round(float(arr.max()), 4),
-            "n": int(arr.size)}
-
-
-def _serialise_result(query: Dict[str, Any], qr: QueryResult, metrics: Optional[Dict[str, Any]],
-                      relevance: Dict[str, float]) -> Dict[str, Any]:
     return {
-        "query_id": query["query_id"], "category": query.get("category", ""),
-        "seed": query.get("seed"), "query": query["query"], "relevance": relevance,
+        "mean": round(float(arr.mean()), 4),
+        "median": round(float(np.median(arr)), 4),
+        "p95": round(float(np.percentile(arr, 95)), 4),
+        "max": round(float(arr.max()), 4),
+        "n": int(arr.size),
+    }
+
+
+def _serialise_result(
+    query: dict[str, Any],
+    qr: QueryResult,
+    metrics: dict[str, Any] | None,
+    relevance: dict[str, float],
+) -> dict[str, Any]:
+    return {
+        "query_id": query["query_id"],
+        "category": query.get("category", ""),
+        "seed": query.get("seed"),
+        "query": query["query"],
+        "relevance": relevance,
         "metrics": metrics,
         "ranking": [asdict(item) for item in qr.results],
-        "timings_ms": qr.timings_ms, "counts": qr.counts,
-        "rerank_applied": qr.rerank_applied, "rerank_error": qr.rerank_error, "error": qr.error,
+        "timings_ms": qr.timings_ms,
+        "counts": qr.counts,
+        "rerank_applied": qr.rerank_applied,
+        "rerank_error": qr.rerank_error,
+        "error": qr.error,
     }
 
 
 # ------------------------------------------------------------------ one run
-def run_pipeline(config: PipelineConfig, benchmark: Benchmark, corpus: Optional[Corpus] = None,
-                 encoder=None, reranker=None, embedding_cache: Optional[EmbeddingCache] = None,
-                 suite_id: str = "adhoc", label: str = "", group: str = "",
-                 bootstrap_samples: int = 2000, progress: bool = False) -> Dict[str, Any]:
+def run_pipeline(
+    config: PipelineConfig,
+    benchmark: Benchmark,
+    corpus: Corpus | None = None,
+    encoder=None,
+    reranker=None,
+    embedding_cache: EmbeddingCache | None = None,
+    suite_id: str = "adhoc",
+    label: str = "",
+    group: str = "",
+    bootstrap_samples: int = 2000,
+    progress: bool = False,
+) -> dict[str, Any]:
     """Run one configuration over a benchmark.  Raises only for unusable setups
     (bad data, embedding model unavailable, reranker unavailable); per-query
     failures are recorded in the result instead."""
     config = config.validate()
-    started = datetime.now(timezone.utc)
+    started = datetime.now(UTC)
     with ResourceMonitor() as monitor:
-        pipeline = ResearchPipeline(config, corpus=corpus, encoder=encoder, reranker=reranker,
-                                    embedding_cache=embedding_cache)
+        pipeline = ResearchPipeline(
+            config,
+            corpus=corpus,
+            encoder=encoder,
+            reranker=reranker,
+            embedding_cache=embedding_cache,
+        )
         t0 = time.perf_counter()
         build_info = pipeline.build()
         build_seconds = time.perf_counter() - t0
@@ -168,15 +224,15 @@ def run_pipeline(config: PipelineConfig, benchmark: Benchmark, corpus: Optional[
         validation = validate_benchmark(benchmark, corpus)
         invalid_ids = validation["invalid_ids"]
 
-        rows: List[Optional[Dict[str, Any]]] = []
-        per_query: List[Dict[str, Any]] = []
-        skipped: List[Dict[str, str]] = []
-        errors: List[Dict[str, str]] = []
-        stage_ms: Dict[str, List[float]] = {}
-        pool_before: List[float] = []
-        pool_after: List[float] = []
+        rows: list[dict[str, Any] | None] = []
+        per_query: list[dict[str, Any]] = []
+        skipped: list[dict[str, str]] = []
+        errors: list[dict[str, str]] = []
+        stage_ms: dict[str, list[float]] = {}
+        pool_before: list[float] = []
+        pool_after: list[float] = []
         rerank_failures = 0
-        evaluated_queries: List[Dict[str, Any]] = []
+        evaluated_queries: list[dict[str, Any]] = []
         for index, query in enumerate(benchmark.queries, 1):
             relevance = relevance_map(query)
             known = {i: g for i, g in relevance.items() if i in corpus.records}
@@ -184,16 +240,18 @@ def run_pipeline(config: PipelineConfig, benchmark: Benchmark, corpus: Optional[
                 skipped.append({"query_id": query["query_id"], "reason": "no_relevant_judgments"})
                 continue
             if not known:
-                skipped.append({"query_id": query["query_id"],
-                                "reason": "relevant_ids_not_in_corpus"})
+                skipped.append(
+                    {"query_id": query["query_id"], "reason": "relevant_ids_not_in_corpus"}
+                )
                 continue
             result = pipeline.search(query["query"])
             if result.error:
                 errors.append({"query_id": query["query_id"], "error": result.error})
             if result.rerank_error:
                 rerank_failures += 1
-                errors.append({"query_id": query["query_id"],
-                               "error": f"rerank: {result.rerank_error}"})
+                errors.append(
+                    {"query_id": query["query_id"], "error": f"rerank: {result.rerank_error}"}
+                )
             ranked = [item.function_id for item in result.results]
             # Judgments naming IDs absent from the corpus stay in the denominator:
             # they are unretrievable and honestly count as misses.
@@ -208,7 +266,9 @@ def run_pipeline(config: PipelineConfig, benchmark: Benchmark, corpus: Optional[
                 pool_after.append(len(rel & set(result.pool_after_graph)) / len(rel))
             per_query.append(_serialise_result(query, result, metrics, relevance))
             if progress and index % 50 == 0:
-                logger.info("%s: %d/%d queries", label or config.name, index, len(benchmark.queries))
+                logger.info(
+                    "%s: %d/%d queries", label or config.name, index, len(benchmark.queries)
+                )
 
         valid_rows = [r for r in rows if r is not None]
         categories = [q.get("category", "") for q in evaluated_queries]
@@ -216,8 +276,10 @@ def run_pipeline(config: PipelineConfig, benchmark: Benchmark, corpus: Optional[
         overall = mean_metrics(valid_rows)
         confidence = {
             name: bootstrap_mean_ci([r[name] for r in valid_rows], groups, bootstrap_samples)
-            for name in HEADLINE_METRICS if valid_rows}
-    finished = datetime.now(timezone.utc)
+            for name in HEADLINE_METRICS
+            if valid_rows
+        }
+    finished = datetime.now(UTC)
 
     enrichment = corpus.meta.get("enrichment", {})
     run_hash = config.config_hash()
@@ -226,12 +288,15 @@ def run_pipeline(config: PipelineConfig, benchmark: Benchmark, corpus: Optional[
     result = {
         "schema_version": RESULT_SCHEMA_VERSION,
         "experiment_id": experiment_id,
-        "suite_id": suite_id, "group": group, "label": label or config.name,
+        "suite_id": suite_id,
+        "group": group,
+        "label": label or config.name,
         "timestamp": started.isoformat(timespec="seconds"),
         "duration_seconds": round((finished - started).total_seconds(), 2),
         "status": status,
         "pipeline": config.name,
-        "config": config.to_dict(), "config_hash": run_hash,
+        "config": config.to_dict(),
+        "config_hash": run_hash,
         "embedding_model": build_info.get("encoder"),
         "enrichment_model": config.enrichment_model,
         "enrichment_run": corpus.meta.get("enrichment_run"),
@@ -240,8 +305,10 @@ def run_pipeline(config: PipelineConfig, benchmark: Benchmark, corpus: Optional[
         "ground_truth_version": benchmark.ground_truth_version,
         "benchmark_id": benchmark.benchmark_id,
         "dataset": {
-            "project": corpus.meta.get("project"), "functions": len(corpus),
-            "base_json": corpus.meta.get("base_json"), "base_sha256": corpus.meta.get("base_sha256"),
+            "project": corpus.meta.get("project"),
+            "functions": len(corpus),
+            "base_json": corpus.meta.get("base_json"),
+            "base_sha256": corpus.meta.get("base_sha256"),
             "enriched_json": corpus.meta.get("enriched_json"),
             "enriched_sha256": corpus.meta.get("enriched_sha256"),
             "duplicate_ids": corpus.meta.get("duplicate_ids"),
@@ -254,14 +321,19 @@ def run_pipeline(config: PipelineConfig, benchmark: Benchmark, corpus: Optional[
             "status_counts": enrichment.get("status_counts"),
             "semantic_coverage": enrichment.get("semantic_coverage"),
             "failed_or_incomplete": enrichment.get("failed_or_incomplete"),
-        } if config.enriched_json else None,
+        }
+        if config.enriched_json
+        else None,
         "enrichment_cost": enrichment.get("usage_totals") if config.enriched_json else None,
         "index": {k: build_info[k] for k in ("indexes", "index_bytes_total", "documents", "graph")},
         "metrics": {
-            "k_values": [1, 3, 5, 10], "top_k": config.top_k,
-            "n_queries_total": len(benchmark.queries), "n_queries_evaluated": len(valid_rows),
+            "k_values": [1, 3, 5, 10],
+            "top_k": config.top_k,
+            "n_queries_total": len(benchmark.queries),
+            "n_queries_evaluated": len(valid_rows),
             "skipped": skipped,
-            "overall": overall, "confidence_95": confidence,
+            "overall": overall,
+            "confidence_95": confidence,
             "by_category": by_category(valid_rows, categories) if valid_rows else {},
             "candidate_pool": {
                 "recall_before_graph": float(np.mean(pool_before)) if pool_before else None,
@@ -274,21 +346,28 @@ def run_pipeline(config: PipelineConfig, benchmark: Benchmark, corpus: Optional[
         "timing": {
             "build_seconds": round(build_seconds, 3),
             "build_breakdown_s": {k: round(v, 4) for k, v in build_info["timings"].items()},
-            "embedding_cache_hits": {k: v.get("cache_hit") for k, v in build_info["indexes"].items()
-                                     if k.startswith("dense:")},
+            "embedding_cache_hits": {
+                k: v.get("cache_hit")
+                for k, v in build_info["indexes"].items()
+                if k.startswith("dense:")
+            },
             "query_ms_by_stage": {stage: _latency_stats(v) for stage, v in stage_ms.items()},
         },
         "resources": monitor.as_dict(),
-        "rerank": {"enabled": config.rerank.enabled,
-                   "applied_queries": sum(1 for q in per_query if q["rerank_applied"]),
-                   "failed_queries": rerank_failures} if config.rerank.enabled else None,
+        "rerank": {
+            "enabled": config.rerank.enabled,
+            "applied_queries": sum(1 for q in per_query if q["rerank_applied"]),
+            "failed_queries": rerank_failures,
+        }
+        if config.rerank.enabled
+        else None,
         "errors": errors,
     }
     result["_per_query"] = per_query  # stripped by the store; kept in memory for comparisons
     return result
 
 
-def _mean_count(per_query: Sequence[Dict[str, Any]], key: str) -> Optional[float]:
+def _mean_count(per_query: Sequence[dict[str, Any]], key: str) -> float | None:
     values = [q["counts"][key] for q in per_query if key in q.get("counts", {})]
     return float(np.mean(values)) if values else None
 
@@ -302,52 +381,65 @@ class ExperimentStore:
         self.runs_dir = self.suite_dir / "runs"
         self.runs_dir.mkdir(parents=True, exist_ok=True)
 
-    def save_suite_info(self, info: Dict[str, Any]) -> Path:
+    def save_suite_info(self, info: dict[str, Any]) -> Path:
         path = self.suite_dir / "suite.json"
         if path.exists():  # never overwrite: a re-run of the same suite id gets a new file
-            path = self.suite_dir / f"suite-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}.json"
+            path = self.suite_dir / f"suite-{datetime.now(UTC):%Y%m%dT%H%M%S}.json"
         path.write_text(json.dumps(info, indent=2, default=str), encoding="utf-8")
         return path
 
-    def save_run(self, result: Dict[str, Any]) -> Path:
+    def save_run(self, result: dict[str, Any]) -> Path:
         per_query = result.pop("_per_query", [])
         run_dir = self.runs_dir / result["experiment_id"]
         if run_dir.exists():
             raise FileExistsError(f"refusing to overwrite existing experiment {run_dir}")
         run_dir.mkdir(parents=True)
-        (run_dir / "result.json").write_text(json.dumps(result, indent=2, default=str),
-                                             encoding="utf-8")
+        (run_dir / "result.json").write_text(
+            json.dumps(result, indent=2, default=str), encoding="utf-8"
+        )
         with gzip.open(run_dir / "per_query.jsonl.gz", "wt", encoding="utf-8") as handle:
             for row in per_query:
                 handle.write(json.dumps(row, default=str) + "\n")
         result["_per_query"] = per_query
         return run_dir
 
-    def load_runs(self) -> List[Dict[str, Any]]:
+    def load_runs(self) -> list[dict[str, Any]]:
         runs = []
         for path in sorted(self.runs_dir.glob("*/result.json")):
             runs.append(json.loads(path.read_text(encoding="utf-8")))
         return runs
 
     @staticmethod
-    def load_per_query(run_dir: Path) -> List[Dict[str, Any]]:
+    def load_per_query(run_dir: Path) -> list[dict[str, Any]]:
         with gzip.open(Path(run_dir) / "per_query.jsonl.gz", "rt", encoding="utf-8") as handle:
             return [json.loads(line) for line in handle if line.strip()]
 
 
-def failed_run_record(config: PipelineConfig, label: str, group: str, suite_id: str,
-                      error: BaseException) -> Dict[str, Any]:
+def failed_run_record(
+    config: PipelineConfig, label: str, group: str, suite_id: str, error: BaseException
+) -> dict[str, Any]:
     """A result stub for a run that could not execute (model unavailable, bad data...)."""
-    kind = ("embedding_unavailable" if isinstance(error, EmbeddingUnavailable)
-            else "reranker_unavailable" if isinstance(error, RerankerUnavailable)
-            else "error")
-    now = datetime.now(timezone.utc)
+    kind = (
+        "embedding_unavailable"
+        if isinstance(error, EmbeddingUnavailable)
+        else "reranker_unavailable"
+        if isinstance(error, RerankerUnavailable)
+        else "error"
+    )
+    now = datetime.now(UTC)
     return {
         "schema_version": RESULT_SCHEMA_VERSION,
         "experiment_id": f"exp-{now.strftime('%Y%m%dT%H%M%S')}-{config.config_hash()}-{os.urandom(2).hex()}",
-        "suite_id": suite_id, "group": group, "label": label, "pipeline": config.name,
-        "timestamp": now.isoformat(timespec="seconds"), "status": "failed",
-        "failure_kind": kind, "error": f"{type(error).__name__}: {error}",
-        "config": config.to_dict(), "config_hash": config.config_hash(),
-        "enrichment_model": config.enrichment_model, "metrics": None,
+        "suite_id": suite_id,
+        "group": group,
+        "label": label,
+        "pipeline": config.name,
+        "timestamp": now.isoformat(timespec="seconds"),
+        "status": "failed",
+        "failure_kind": kind,
+        "error": f"{type(error).__name__}: {error}",
+        "config": config.to_dict(),
+        "config_hash": config.config_hash(),
+        "enrichment_model": config.enrichment_model,
+        "metrics": None,
     }

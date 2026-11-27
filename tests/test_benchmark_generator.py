@@ -26,15 +26,28 @@ def function(fid, name, summary, calls=None):
 class BenchmarkGeneratorTests(unittest.TestCase):
     def setUp(self):
         self.functions = [
-            function("a", "parseRecord", "Converts encoded input into structured fields", [{"id": "b", "name": "storeFields"}]),
-            function("b", "storeFields", "Persists structured fields in the lookup state", [{"id": "c", "name": "emitResult"}]),
+            function(
+                "a",
+                "parseRecord",
+                "Converts encoded input into structured fields",
+                [{"id": "b", "name": "storeFields"}],
+            ),
+            function(
+                "b",
+                "storeFields",
+                "Persists structured fields in the lookup state",
+                [{"id": "c", "name": "emitResult"}],
+            ),
             function("c", "emitResult", "Produces a compact result for the caller"),
             function("d", "validateInput", "Checks input constraints before processing"),
         ]
 
     def test_default_distribution_is_twenty_five_thirty_five_forty(self):
         queries = BenchmarkQueryGenerator(1).generate_benchmark_queries(self.functions, 20)
-        counts = {level: sum(q["difficulty"] == level for q in queries) for level in ("easy", "moderate", "difficult")}
+        counts = {
+            level: sum(q["difficulty"] == level for q in queries)
+            for level in ("easy", "moderate", "difficult")
+        }
         self.assertEqual(counts, {"easy": 5, "moderate": 7, "difficult": 8})
 
     def test_queries_do_not_leak_target_identifiers_and_are_unique(self):
@@ -55,19 +68,22 @@ class BenchmarkGeneratorTests(unittest.TestCase):
         self.assertTrue(any(len(q["relevant_functions"]) >= 3 for q in multi_hop))
 
     def test_validation_reports_duplicates_and_identifier_leaks(self):
-        queries = [{
-            "query_id": "q1",
-            "query": "Where does parseRecord run?",
-            "relevant_functions": ["a"],
-            "difficulty": "easy",
-            "category": "functionality",
-        }, {
-            "query_id": "q2",
-            "query": "Where does parseRecord run?",
-            "relevant_functions": ["a"],
-            "difficulty": "easy",
-            "category": "functionality",
-        }]
+        queries = [
+            {
+                "query_id": "q1",
+                "query": "Where does parseRecord run?",
+                "relevant_functions": ["a"],
+                "difficulty": "easy",
+                "category": "functionality",
+            },
+            {
+                "query_id": "q2",
+                "query": "Where does parseRecord run?",
+                "relevant_functions": ["a"],
+                "difficulty": "easy",
+                "category": "functionality",
+            },
+        ]
         report = validate_benchmark_queries(queries, self.functions)
         self.assertEqual(report["duplicate_queries"], 1)
         self.assertEqual(report["identifier_leaks"], 2)

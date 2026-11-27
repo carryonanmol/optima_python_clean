@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from statistics import mean, median, stdev
-from typing import Any, Iterable
+from typing import Any
 
 
 def _summary(values: Iterable[float]) -> dict[str, float | int | None]:
@@ -19,8 +20,9 @@ def _summary(values: Iterable[float]) -> dict[str, float | int | None]:
     }
 
 
-def query_metrics(retrieved: list[dict[str, Any]], relevant: set[str],
-                  graded: dict[str, float] | None = None) -> dict[str, Any]:
+def query_metrics(
+    retrieved: list[dict[str, Any]], relevant: set[str], graded: dict[str, float] | None = None
+) -> dict[str, Any]:
     """Calculate metrics for one ranked query, without assuming unique results."""
     # FAISS indexes may contain several chunks for one function. Retrieval
     # metrics operate on ranked nodes, so retain the first occurrence only.
@@ -32,8 +34,10 @@ def query_metrics(retrieved: list[dict[str, Any]], relevant: set[str],
             seen.add(item_id)
             unique.append(item)
     ids = [str(item.get("function_id", "")) for item in unique]
-    binary = [1.0 if item.get("relevant") or item.get("function_id") in relevant else 0.0
-              for item in unique]
+    binary = [
+        1.0 if item.get("relevant") or item.get("function_id") in relevant else 0.0
+        for item in unique
+    ]
     if graded:
         gains = [float(graded.get(item_id, 0.0)) for item_id in ids]
         # Ideal ranking comes from the *judgments*, not from what was retrieved.
@@ -48,7 +52,7 @@ def query_metrics(retrieved: list[dict[str, Any]], relevant: set[str],
         "num_relevant": len(relevant),
     }
     for k in (1, 3, 5, 10, 20):
-        top = ids[:k]
+        ids[:k]
         top_binary = binary[:k]
         hits = sum(top_binary)
         result[f"recall_at_{k}"] = hits / len(relevant) if relevant else None
@@ -73,8 +77,15 @@ def _ndcg(gains: list[float], ideal_gains: list[float], k: int) -> float:
 def aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Aggregate per-query rows with mean, median, and standard deviation."""
     metrics = {}
-    names = [key for key in rows[0] if key.startswith(("recall_at_", "precision_at_",
-                                                        "ndcg_at_", "hit_at_"))] if rows else []
+    names = (
+        [
+            key
+            for key in rows[0]
+            if key.startswith(("recall_at_", "precision_at_", "ndcg_at_", "hit_at_"))
+        ]
+        if rows
+        else []
+    )
     names += ["mrr"]
     for name in dict.fromkeys(names):
         values = [row[name] for row in rows if row.get(name) is not None]

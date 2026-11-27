@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from optima.rag.evaluation import create_benchmark_from_json_files
-from pathlib import Path
 import logging
+from pathlib import Path
+
+from optima.rag.evaluation import create_benchmark_from_json_files
 
 # Set up logging to see what's happening
 logging.basicConfig(level=logging.INFO)
@@ -18,7 +20,7 @@ queries = create_benchmark_from_json_files(
     output_dir,
     20,  # num_queries
     (0.4, 0.35, 0.25),  # difficulty_distribution
-    42  # seed
+    42,  # seed
 )
 
 print(f"Generated {len(queries)} queries")

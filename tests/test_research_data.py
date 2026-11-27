@@ -3,13 +3,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from optima.rag.research.benchmark import (BenchmarkError, build_structural_benchmark,
-                                           load_benchmark, validate_benchmark)
+from research_fixtures import make_id, write_fixture
+
+from optima.rag.research.benchmark import (
+    BenchmarkError,
+    build_structural_benchmark,
+    load_benchmark,
+    validate_benchmark,
+)
 from optima.rag.research.config import RepresentationConfig
 from optima.rag.research.corpus import CorpusError, load_corpus
 from optima.rag.research.representations import build_texts
-
-from research_fixtures import make_id, write_fixture
 
 
 class CorpusTests(unittest.TestCase):
@@ -23,12 +27,14 @@ class CorpusTests(unittest.TestCase):
         raw = load_corpus(paths["base"])
         enriched = load_corpus(paths["base"], paths["enriched"])
         self.assertEqual(len(raw), 8)
-        self.assertEqual(raw.ids, enriched.ids)                  # same universe, same order
-        self.assertIn(make_id("parse"), raw.records)             # IDs are verbatim, never rewritten
+        self.assertEqual(raw.ids, enriched.ids)  # same universe, same order
+        self.assertIn(make_id("parse"), raw.records)  # IDs are verbatim, never rewritten
         self.assertEqual(raw.records[make_id("parse")].enrichment_status, "missing")
         self.assertEqual(enriched.records[make_id("parse")].enrichment_status, "ok")
-        self.assertEqual(enriched.records[make_id("parse")].semantic["purpose"],
-                         "Parse a JSON document into a tree")
+        self.assertEqual(
+            enriched.records[make_id("parse")].semantic["purpose"],
+            "Parse a JSON document into a tree",
+        )
 
     def test_missing_failed_and_empty_enrichment_keep_the_function(self):
         paths = write_fixture(self.dir)
@@ -97,10 +103,14 @@ class RepresentationTests(unittest.TestCase):
         self.assertIn("hash_string", texts[make_id("hash")])
 
     def test_missing_semantic_policies(self):
-        excl = build_texts(self.corpus, "semantic", RepresentationConfig(missing_semantic="exclude"))
+        excl = build_texts(
+            self.corpus, "semantic", RepresentationConfig(missing_semantic="exclude")
+        )
         self.assertEqual(len(excl), 6)
         self.assertNotIn(make_id("hash"), excl)
-        raw_fallback = build_texts(self.corpus, "semantic", RepresentationConfig(missing_semantic="raw"))
+        raw_fallback = build_texts(
+            self.corpus, "semantic", RepresentationConfig(missing_semantic="raw")
+        )
         self.assertIn("5381", raw_fallback[make_id("hash")])
 
     def test_unmentioned_large_blobs_are_not_rendered(self):
@@ -117,8 +127,11 @@ class BenchmarkTests(unittest.TestCase):
 
     def test_exact_name_labels_include_every_function_with_that_name(self):
         bench = build_structural_benchmark(self.corpus, per_category=20)
-        exact = [q for q in bench["queries"] if q["category"] == "exact_name"
-                 and "read_token" in q["query"]]
+        exact = [
+            q
+            for q in bench["queries"]
+            if q["category"] == "exact_name" and "read_token" in q["query"]
+        ]
         self.assertEqual(len(exact), 1)
         self.assertEqual(set(exact[0]["relevance"]), {make_id("read"), make_id("read2")})
 
@@ -127,13 +140,17 @@ class BenchmarkTests(unittest.TestCase):
         callers = {q["query"]: q for q in bench["queries"] if q["category"] == "caller"}
         target = next(q for text, q in callers.items() if "is_digit" in text)
         self.assertEqual(set(target["relevance"]), {make_id("read")})
-        callees = [q for q in bench["queries"] if q["category"] == "callee" and "parse_json" in q["query"]]
+        callees = [
+            q for q in bench["queries"] if q["category"] == "callee" and "parse_json" in q["query"]
+        ]
         self.assertEqual(set(callees[0]["relevance"]), {make_id("read"), make_id("alloc")})
 
     def test_multi_hop_is_graded_and_dependency_category_is_declared_unsupported(self):
         bench = build_structural_benchmark(self.corpus, per_category=20)
         self.assertIn("dependency", bench["unsupported_categories"])
-        hops = [q for q in bench["queries"] if q["category"] == "multi_hop" and "is_digit" in q["query"]]
+        hops = [
+            q for q in bench["queries"] if q["category"] == "multi_hop" and "is_digit" in q["query"]
+        ]
         self.assertTrue(hops)
         self.assertEqual(hops[0]["relevance"][make_id("read")], 2.0)
         self.assertEqual(hops[0]["relevance"][make_id("parse")], 1.0)
@@ -148,20 +165,37 @@ class BenchmarkTests(unittest.TestCase):
         self.assertTrue(report["ok"], report)
 
     def test_authored_queries_resolve_by_file_and_qualified_name_or_fail_loudly(self):
-        good = {"queries": [{"query": "check digit", "targets": [
-            {"file": "digit.c", "qualified_name": "is_digit", "grade": 2}]}]}
+        good = {
+            "queries": [
+                {
+                    "query": "check digit",
+                    "targets": [{"file": "digit.c", "qualified_name": "is_digit", "grade": 2}],
+                }
+            ]
+        }
         bench = build_structural_benchmark(self.corpus, per_category=1, authored=good)
-        self.assertEqual([q for q in bench["queries"] if q["category"] == "behavioral"][0]["relevance"],
-                         {make_id("digit"): 2.0})
-        bad = {"queries": [{"query": "x", "targets": [{"file": "nope", "qualified_name": "nothing"}]}]}
+        self.assertEqual(
+            [q for q in bench["queries"] if q["category"] == "behavioral"][0]["relevance"],
+            {make_id("digit"): 2.0},
+        )
+        bad = {
+            "queries": [{"query": "x", "targets": [{"file": "nope", "qualified_name": "nothing"}]}]
+        }
         with self.assertRaises(BenchmarkError):
             build_structural_benchmark(self.corpus, per_category=1, authored=bad)
 
     def test_validation_flags_unknown_ids_empty_judgments_and_duplicates(self):
-        data = {"benchmark_id": "x", "query_set_version": "1", "ground_truth_version": "1",
-                "project": "p", "base_sha256": "", "queries": [
-                    {"query_id": "a", "query": "q1", "relevant_functions": ["nope"]},
-                    {"query_id": "a", "query": "q2", "relevant_functions": []}]}
+        data = {
+            "benchmark_id": "x",
+            "query_set_version": "1",
+            "ground_truth_version": "1",
+            "project": "p",
+            "base_sha256": "",
+            "queries": [
+                {"query_id": "a", "query": "q1", "relevant_functions": ["nope"]},
+                {"query_id": "a", "query": "q2", "relevant_functions": []},
+            ],
+        }
         path = Path(self._tmp.name) / "b.json"
         path.write_text(json.dumps(data), encoding="utf-8")
         report = validate_benchmark(load_benchmark(path), self.corpus)
@@ -172,8 +206,9 @@ class BenchmarkTests(unittest.TestCase):
 
     def test_legacy_list_format_loads(self):
         path = Path(self._tmp.name) / "legacy.json"
-        path.write_text(json.dumps([{"query": "q", "relevant_functions": [make_id("digit")]}]),
-                        encoding="utf-8")
+        path.write_text(
+            json.dumps([{"query": "q", "relevant_functions": [make_id("digit")]}]), encoding="utf-8"
+        )
         bench = load_benchmark(path)
         self.assertEqual(bench.query_set_version, "legacy")
         self.assertEqual(bench.queries[0]["query_id"], "q_0001")

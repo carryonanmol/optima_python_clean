@@ -16,7 +16,7 @@ import csv
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .errors import ComparisonMismatchError, EmbeddingError, EvaluationError, NoCorporaError
 
@@ -33,7 +33,8 @@ def discover_passed_corpora(ctx: Any) -> list[str]:
     """Return ['raw', <passed model slugs...>]. Raises if nothing has passed."""
     manifest = ctx.load_manifest()
     passed = sorted(
-        slug for slug, info in manifest.get("models", {}).items()
+        slug
+        for slug, info in manifest.get("models", {}).items()
         if info.get("status") == "enrichment_passed"
     )
     if not passed:
@@ -70,15 +71,19 @@ def make_embedding_view(ctx: Any, slug: str) -> Path:
     view_path = ctx.rag_inputs_dir / f"enhanced_{slug}.json"
     save_json(view, view_path)
     manifest = {
-        "slug": slug, "stripped_failed_ids": stripped_ids,
-        "stripped_count": len(stripped_ids), "source": str(enhanced_path),
+        "slug": slug,
+        "stripped_failed_ids": stripped_ids,
+        "stripped_count": len(stripped_ids),
+        "source": str(enhanced_path),
     }
     (ctx.rag_inputs_dir / f"{slug}.view.json").write_text(
         json.dumps(manifest, indent=2, default=str) + "\n", encoding="utf-8"
     )
     if stripped_ids:
-        print(f"EMBEDDING VIEW [{slug}]: stripped {len(stripped_ids)} failed "
-              f"enrichment(s) -> raw representation for those functions")
+        print(
+            f"EMBEDDING VIEW [{slug}]: stripped {len(stripped_ids)} failed "
+            f"enrichment(s) -> raw representation for those functions"
+        )
     return view_path
 
 
@@ -106,12 +111,13 @@ def _write_fingerprint(report_dir: Path, corpus_name: str, alias: str, input_pat
     index_dir = index_directory(report_dir, corpus_name, alias)
     index_dir.mkdir(parents=True, exist_ok=True)
     (index_dir / "source_fingerprint.json").write_text(
-        json.dumps({"sha256": _sha256_file(input_path), "source": str(input_path)}, indent=2) + "\n",
+        json.dumps({"sha256": _sha256_file(input_path), "source": str(input_path)}, indent=2)
+        + "\n",
         encoding="utf-8",
     )
 
 
-def _expected_function_count(ctx: Any) -> Optional[int]:
+def _expected_function_count(ctx: Any) -> int | None:
     report_path = ctx.base_dir / "validation_report.json"
     if report_path.exists():
         try:
@@ -121,7 +127,7 @@ def _expected_function_count(ctx: Any) -> Optional[int]:
     return None
 
 
-def _assert_index_ok(result: dict[str, Any], mode: str, expected_documents: Optional[int]) -> None:
+def _assert_index_ok(result: dict[str, Any], mode: str, expected_documents: int | None) -> None:
     if not result.get("success"):
         raise EmbeddingError(f"embed_corpus failed: {result}")
     metadata = result.get("metadata", {})
@@ -143,7 +149,10 @@ def _assert_index_ok(result: dict[str, Any], mode: str, expected_documents: Opti
             f"{result.get('corpus_name')}: expected {mode!r}, got "
             f"{metadata.get('representation_mode')!r}."
         )
-    if expected_documents is not None and metadata.get("num_documents") not in (None, expected_documents):
+    if expected_documents is not None and metadata.get("num_documents") not in (
+        None,
+        expected_documents,
+    ):
         raise EmbeddingError(
             f"Index for corpus={result.get('corpus_name')} has "
             f"{metadata.get('num_documents')} documents, expected "
@@ -151,8 +160,9 @@ def _assert_index_ok(result: dict[str, Any], mode: str, expected_documents: Opti
         )
 
 
-def build_indexes(ctx: Any, corpora: list[str], embedding_models: list[str],
-                   modes: list[str]) -> dict[str, dict[str, dict[str, Any]]]:
+def build_indexes(
+    ctx: Any, corpora: list[str], embedding_models: list[str], modes: list[str]
+) -> dict[str, dict[str, dict[str, Any]]]:
     """Build (or reuse, if the source fingerprint is unchanged) a FAISS index
     for every (mode, embedding alias, corpus) combination.
     """
@@ -175,19 +185,24 @@ def build_indexes(ctx: Any, corpora: list[str], embedding_models: list[str],
                 enrichment_model = None if slug == "raw" else slug
                 input_path = _corpus_input_path(ctx, ctx.base, slug)
                 changed = _fingerprint_changed(report_dir, slug, alias, input_path)
-                result = embed_corpus(input_path, enrichment_model, alias, report_dir, mode, force=changed)
+                result = embed_corpus(
+                    input_path, enrichment_model, alias, report_dir, mode, force=changed
+                )
                 _assert_index_ok(result, mode, expected_documents)
                 if changed:
                     _write_fingerprint(report_dir, slug, alias, input_path)
                 results.setdefault(mode, {}).setdefault(alias, {})[slug] = result
-                print(f"INDEX [{mode}/{alias}/{slug}]: "
-                      f"{'built' if not result.get('skipped') else 'reused'}, "
-                      f"documents={result.get('metadata', {}).get('num_documents')}")
+                print(
+                    f"INDEX [{mode}/{alias}/{slug}]: "
+                    f"{'built' if not result.get('skipped') else 'reused'}, "
+                    f"documents={result.get('metadata', {}).get('num_documents')}"
+                )
     return results
 
 
-def retrieval_smoke(ctx: Any, corpora: list[str], alias: str, mode: str,
-                     bench: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+def retrieval_smoke(
+    ctx: Any, corpora: list[str], alias: str, mode: str, bench: dict[str, Any]
+) -> dict[str, list[dict[str, Any]]]:
     """Sanity-check the retrieval pipeline itself (not quality): every corpus
     returns non-empty, well-formed results for one benchmark query.
     """
@@ -221,20 +236,28 @@ def retrieval_smoke(ctx: Any, corpora: list[str], alias: str, mode: str,
 
     out_path = report_dir / "results" / "retrieval_smoke.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps({"query": query_text, "results": results}, indent=2, default=str) + "\n",
-                        encoding="utf-8")
+    out_path.write_text(
+        json.dumps({"query": query_text, "results": results}, indent=2, default=str) + "\n",
+        encoding="utf-8",
+    )
     return results
 
 
-def _validate_matrix(matrix: dict[str, Any], aliases: list[str], corpora: list[str], num_queries: int) -> None:
+def _validate_matrix(
+    matrix: dict[str, Any], aliases: list[str], corpora: list[str], num_queries: int
+) -> None:
     for alias in aliases:
         corpus_results = matrix.get(alias, {})
         for slug in corpora:
             metrics = corpus_results.get(slug)
             if metrics is None:
-                raise EvaluationError(f"Missing evaluation result for alias={alias}, corpus={slug}.")
+                raise EvaluationError(
+                    f"Missing evaluation result for alias={alias}, corpus={slug}."
+                )
             if "error" in metrics:
-                raise EvaluationError(f"Evaluation error for alias={alias}, corpus={slug}: {metrics['error']}")
+                raise EvaluationError(
+                    f"Evaluation error for alias={alias}, corpus={slug}: {metrics['error']}"
+                )
             if metrics.get("num_queries") != num_queries:
                 raise EvaluationError(
                     f"alias={alias}, corpus={slug}: num_queries={metrics.get('num_queries')} "
@@ -248,8 +271,14 @@ def _validate_matrix(matrix: dict[str, Any], aliases: list[str], corpora: list[s
                 )
 
 
-def evaluate_all(ctx: Any, embedding_models: list[str], modes: list[str],
-                  bench: dict[str, Any], k: int, corpora: list[str]) -> dict[str, Any]:
+def evaluate_all(
+    ctx: Any,
+    embedding_models: list[str],
+    modes: list[str],
+    bench: dict[str, Any],
+    k: int,
+    corpora: list[str],
+) -> dict[str, Any]:
     from colab.colab_pipeline import run_evaluation
     from optima.rag.embedding_simple import OptimaEmbedder, embedding_alias
 
@@ -265,17 +294,23 @@ def evaluate_all(ctx: Any, embedding_models: list[str], modes: list[str],
     for mode in modes:
         report_dir = ctx.rag_dir / mode
         matrix = run_evaluation(
-            report_dir, aliases, benchmark_path=bench["path"],
-            num_queries=len(bench["queries"]), k=k, output_dir=report_dir / "results",
+            report_dir,
+            aliases,
+            benchmark_path=bench["path"],
+            num_queries=len(bench["queries"]),
+            k=k,
+            output_dir=report_dir / "results",
         )
         _validate_matrix(matrix, aliases, corpora, len(bench["queries"]))
         matrices[mode] = matrix
-        print(f"EVALUATION [{mode}]: validated {len(aliases)} embedding alias(es) x "
-              f"{len(corpora)} corpus/corpora")
+        print(
+            f"EVALUATION [{mode}]: validated {len(aliases)} embedding alias(es) x "
+            f"{len(corpora)} corpus/corpora"
+        )
     return matrices
 
 
-def _to_float(value: Any) -> Optional[float]:
+def _to_float(value: Any) -> float | None:
     if value is None:
         return None
     try:
@@ -284,7 +319,7 @@ def _to_float(value: Any) -> Optional[float]:
         return None
 
 
-def _delta(value: Any, baseline: Any) -> Optional[float]:
+def _delta(value: Any, baseline: Any) -> float | None:
     v, b = _to_float(value), _to_float(baseline)
     return None if v is None or b is None else round(v - b, 6)
 
@@ -336,8 +371,9 @@ def _load_experiment_settings(ctx: Any, corpora: list[str]) -> dict[str, dict[st
     return settings
 
 
-def build_comparison(ctx: Any, matrices: dict[str, Any], corpora: list[str],
-                      bench: dict[str, Any]) -> dict[str, Any]:
+def build_comparison(
+    ctx: Any, matrices: dict[str, Any], corpora: list[str], bench: dict[str, Any]
+) -> dict[str, Any]:
     """Build the cross-model comparison table. Refuses to compare corpora
     whose generation/prompt settings differ (model and quantization may
     differ; everything that would make the comparison unfair may not).
@@ -373,38 +409,48 @@ def build_comparison(ctx: Any, matrices: dict[str, Any], corpora: list[str],
                     continue
                 raw_metrics = raw_lookup.get((mode, alias), {})
                 model_settings = settings.get(slug, {})
-                rows.append({
-                    "dataset": ctx.dataset,
-                    "base_sha12": ctx.base.sha256[:12], "base_url": ctx.base.url,
-                    "optima_commit": ctx.optima_commit,
-                    "benchmark_sha256": bench["manifest"].get("sha256"),
-                    "num_queries": metrics.get("num_queries"),
-                    "representation_mode": mode, "embedding_alias": alias,
-                    "embedding_model": get_embedding_model_name(alias),
-                    "corpus": slug, "enrichment_model_id": model_settings.get("model_id"),
-                    "model_slug": slug, "quantization": model_settings.get("quantization"),
-                    "resolved_commit_hash": model_settings.get("resolved_commit_hash"),
-                    "prompt_variant": model_settings.get("prompt_variant"),
-                    "config_hash": model_settings.get("config_hash"),
-                    "enrichment_success_rate": model_settings.get("success_rate"),
-                    "failed_functions_stripped": model_settings.get("failed_functions"),
-                    "gpu_placement": model_settings.get("gpu_placement"),
-                    "gpu_count_used": model_settings.get("gpu_count_used"),
-                    "used_cpu_offload": model_settings.get("used_cpu_offload", False),
-                    "recall_at_1": _to_float(metrics.get("recall_at_1")),
-                    "recall_at_5": _to_float(metrics.get("recall_at_5")),
-                    "recall_at_10": _to_float(metrics.get("recall_at_10")),
-                    "mrr": _to_float(metrics.get("mrr")),
-                    "precision_at_5": _to_float(metrics.get("precision_at_5")),
-                    "hit_rate_at_5": _to_float(metrics.get("hit_rate_at_5")),
-                    "mean_latency": _to_float(metrics.get("mean_latency")),
-                    "median_latency": _to_float(metrics.get("median_latency")),
-                    "document_count": metrics.get("document_count"),
-                    "delta_recall_at_5_vs_raw": _delta(metrics.get("recall_at_5"), raw_metrics.get("recall_at_5")),
-                    "delta_mrr_vs_raw": _delta(metrics.get("mrr"), raw_metrics.get("mrr")),
-                })
+                rows.append(
+                    {
+                        "dataset": ctx.dataset,
+                        "base_sha12": ctx.base.sha256[:12],
+                        "base_url": ctx.base.url,
+                        "optima_commit": ctx.optima_commit,
+                        "benchmark_sha256": bench["manifest"].get("sha256"),
+                        "num_queries": metrics.get("num_queries"),
+                        "representation_mode": mode,
+                        "embedding_alias": alias,
+                        "embedding_model": get_embedding_model_name(alias),
+                        "corpus": slug,
+                        "enrichment_model_id": model_settings.get("model_id"),
+                        "model_slug": slug,
+                        "quantization": model_settings.get("quantization"),
+                        "resolved_commit_hash": model_settings.get("resolved_commit_hash"),
+                        "prompt_variant": model_settings.get("prompt_variant"),
+                        "config_hash": model_settings.get("config_hash"),
+                        "enrichment_success_rate": model_settings.get("success_rate"),
+                        "failed_functions_stripped": model_settings.get("failed_functions"),
+                        "gpu_placement": model_settings.get("gpu_placement"),
+                        "gpu_count_used": model_settings.get("gpu_count_used"),
+                        "used_cpu_offload": model_settings.get("used_cpu_offload", False),
+                        "recall_at_1": _to_float(metrics.get("recall_at_1")),
+                        "recall_at_5": _to_float(metrics.get("recall_at_5")),
+                        "recall_at_10": _to_float(metrics.get("recall_at_10")),
+                        "mrr": _to_float(metrics.get("mrr")),
+                        "precision_at_5": _to_float(metrics.get("precision_at_5")),
+                        "hit_rate_at_5": _to_float(metrics.get("hit_rate_at_5")),
+                        "mean_latency": _to_float(metrics.get("mean_latency")),
+                        "median_latency": _to_float(metrics.get("median_latency")),
+                        "document_count": metrics.get("document_count"),
+                        "delta_recall_at_5_vs_raw": _delta(
+                            metrics.get("recall_at_5"), raw_metrics.get("recall_at_5")
+                        ),
+                        "delta_mrr_vs_raw": _delta(metrics.get("mrr"), raw_metrics.get("mrr")),
+                    }
+                )
 
-    rows.sort(key=lambda row: (row["representation_mode"], row["embedding_alias"], -(row["mrr"] or 0)))
+    rows.sort(
+        key=lambda row: (row["representation_mode"], row["embedding_alias"], -(row["mrr"] or 0))
+    )
 
     out_json = ctx.summaries_dir / "comparison.json"
     out_csv = ctx.summaries_dir / "comparison.csv"

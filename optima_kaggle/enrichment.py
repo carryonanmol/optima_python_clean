@@ -16,9 +16,9 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .errors import (
     CheckpointCorruptError,
@@ -34,14 +34,14 @@ REQUIRED_GATES = ("gate1_load", "gate2_trivial", "gate3_one_function", "gate4_th
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 @dataclass
 class GenerationSettings:
     do_sample: bool = False
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
+    temperature: float | None = None
+    top_p: float | None = None
     max_new_tokens: int = 768
     retries: int = 2
     prompt_variant: str = "colab_v2_no_module_ir"  # or "colab_v2" (exact Colab behavior)
@@ -54,14 +54,22 @@ def config_hash(spec: Any, gen: GenerationSettings) -> str:
     checkpoint (new slug suffix) rather than silently mixing results.
     """
     payload = {
-        "model_id": spec.model_id, "revision": spec.revision,
-        "quantization": spec.quantization, "max_input_tokens": spec.max_input_tokens,
-        "max_new_tokens": gen.max_new_tokens, "do_sample": gen.do_sample,
-        "temperature": gen.temperature, "top_p": gen.top_p,
-        "repetition_penalty": gen.repetition_penalty, "prompt_variant": gen.prompt_variant,
-        "retries": gen.retries, "chat_template_kwargs": spec.chat_template_kwargs,
+        "model_id": spec.model_id,
+        "revision": spec.revision,
+        "quantization": spec.quantization,
+        "max_input_tokens": spec.max_input_tokens,
+        "max_new_tokens": gen.max_new_tokens,
+        "do_sample": gen.do_sample,
+        "temperature": gen.temperature,
+        "top_p": gen.top_p,
+        "repetition_penalty": gen.repetition_penalty,
+        "prompt_variant": gen.prompt_variant,
+        "retries": gen.retries,
+        "chat_template_kwargs": spec.chat_template_kwargs,
     }
-    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:12]
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[
+        :12
+    ]
 
 
 def _count_tokens(tokenizer: Any, messages: list[dict[str, str]], spec: Any) -> int:
@@ -71,9 +79,13 @@ def _count_tokens(tokenizer: Any, messages: list[dict[str, str]], spec: Any) -> 
     return len(tokenizer(prompt, add_special_tokens=False)["input_ids"])
 
 
-def build_bounded_messages(function: dict[str, Any], tokenizer: Any, spec: Any,
-                            prompt_variant: str, input_cap: Optional[int] = None
-                            ) -> tuple[list[dict[str, str]], int, list[str]]:
+def build_bounded_messages(
+    function: dict[str, Any],
+    tokenizer: Any,
+    spec: Any,
+    prompt_variant: str,
+    input_cap: int | None = None,
+) -> tuple[list[dict[str, str]], int, list[str]]:
     """Build the enrichment prompt and reduce it, front-to-back in a fixed
     order, until it fits spec.max_input_tokens. Never truncates from the
     right (which would cut the chat template's closing/assistant turn).
@@ -81,6 +93,7 @@ def build_bounded_messages(function: dict[str, Any], tokenizer: Any, spec: Any,
     is None; the spec's own cap wins when set.
     """
     from colab.colab_pipeline import build_enrichment_messages
+
     limit_tokens = spec.max_input_tokens if spec.max_input_tokens is not None else input_cap
     from optima.enricher import _trim_source
 
@@ -152,16 +165,33 @@ def _fully_reduced_view(function: dict[str, Any]) -> dict[str, Any]:
     return view
 
 
-def _log_attempt(path: Path, *, function_id: str, attempt: int, category: str, reason: str,
-                  input_tokens: Optional[int], output_tokens: Optional[int],
-                  latency_s: Optional[float], finish_reason: Optional[str],
-                  peak_allocated_gib: Optional[float], prompt_reductions: list[str],
-                  raw_response: Optional[str]) -> None:
+def _log_attempt(
+    path: Path,
+    *,
+    function_id: str,
+    attempt: int,
+    category: str,
+    reason: str,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    latency_s: float | None,
+    finish_reason: str | None,
+    peak_allocated_gib: float | None,
+    prompt_reductions: list[str],
+    raw_response: str | None,
+) -> None:
     record = {
-        "function_id": function_id, "attempt": attempt, "category": category, "reason": reason,
-        "input_tokens": input_tokens, "output_tokens": output_tokens, "latency_s": latency_s,
-        "finish_reason": finish_reason, "peak_allocated_gib": peak_allocated_gib,
-        "prompt_reductions": prompt_reductions, "raw_response": raw_response,
+        "function_id": function_id,
+        "attempt": attempt,
+        "category": category,
+        "reason": reason,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "latency_s": latency_s,
+        "finish_reason": finish_reason,
+        "peak_allocated_gib": peak_allocated_gib,
+        "prompt_reductions": prompt_reductions,
+        "raw_response": raw_response,
         "timestamp": _now_iso(),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -186,8 +216,13 @@ def _no_content_enrichment(model_id: str) -> dict[str, Any]:
     return {"model": model_id, "status": "failed", "json_parse_status": "failed"}
 
 
-def enrich_one(handle: Any, function: dict[str, Any], gen: GenerationSettings,
-                attempts_log_path: Path, max_new_tokens_override: Optional[int] = None) -> dict[str, Any]:
+def enrich_one(
+    handle: Any,
+    function: dict[str, Any],
+    gen: GenerationSettings,
+    attempts_log_path: Path,
+    max_new_tokens_override: int | None = None,
+) -> dict[str, Any]:
     """Enrich one function with the taxonomy A-H (module docstring in the
     architecture plan). Raises GenerationOOMError immediately on CUDA OOM
     (no retry, no swallowing); every other failure is recorded on the
@@ -213,40 +248,61 @@ def enrich_one(handle: Any, function: dict[str, Any], gen: GenerationSettings,
     total_latency = 0.0
     total_output_tokens = 0
     last_input_tokens = 0
-    last_finish_reason: Optional[str] = None
+    last_finish_reason: str | None = None
     last_raw = ""
-    last_peak_gib: Optional[float] = None
-    last_free_gib: Optional[float] = None
+    last_peak_gib: float | None = None
+    last_free_gib: float | None = None
     repair_used = False
     prompt_reductions: list[str] = []
     generation_success_any = False
     attempts_made = 0
-    parsed_enrichment: Optional[dict[str, Any]] = None
-    parse_source: Optional[str] = None
+    parsed_enrichment: dict[str, Any] | None = None
+    parse_source: str | None = None
     schema_valid = False
-    max_new_tokens: Optional[int] = None
+    max_new_tokens: int | None = None
 
     for attempt_index in range(gen.retries + 1):
         attempts_made = attempt_index + 1
         try:
-            input_cap = (models.memory_input_cap(handle)
-                         if handle.spec.max_input_tokens is None else None)
+            input_cap = (
+                models.memory_input_cap(handle) if handle.spec.max_input_tokens is None else None
+            )
             messages, input_tokens, reductions = build_bounded_messages(
                 function, handle.tokenizer, handle.spec, gen.prompt_variant, input_cap
             )
         except PromptTooLongError as exc:
             category, reason = "prompt_too_long", str(exc)
-            _log_attempt(attempts_log_path, function_id=function.get("id", ""), attempt=attempt_index,
-                         category=category, reason=reason, input_tokens=None, output_tokens=None,
-                         latency_s=None, finish_reason=None, peak_allocated_gib=None,
-                         prompt_reductions=[], raw_response=None)
+            _log_attempt(
+                attempts_log_path,
+                function_id=function.get("id", ""),
+                attempt=attempt_index,
+                category=category,
+                reason=reason,
+                input_tokens=None,
+                output_tokens=None,
+                latency_s=None,
+                finish_reason=None,
+                peak_allocated_gib=None,
+                prompt_reductions=[],
+                raw_response=None,
+            )
             break
         except Exception as exc:  # noqa: BLE001 - a deterministic build failure, not retried
             category, reason = "prompt_build_error", f"{type(exc).__name__}: {exc}"
-            _log_attempt(attempts_log_path, function_id=function.get("id", ""), attempt=attempt_index,
-                         category=category, reason=reason, input_tokens=None, output_tokens=None,
-                         latency_s=None, finish_reason=None, peak_allocated_gib=None,
-                         prompt_reductions=[], raw_response=None)
+            _log_attempt(
+                attempts_log_path,
+                function_id=function.get("id", ""),
+                attempt=attempt_index,
+                category=category,
+                reason=reason,
+                input_tokens=None,
+                output_tokens=None,
+                latency_s=None,
+                finish_reason=None,
+                peak_allocated_gib=None,
+                prompt_reductions=[],
+                raw_response=None,
+            )
             break
 
         prompt_reductions = reductions
@@ -266,10 +322,17 @@ def enrich_one(handle: Any, function: dict[str, Any], gen: GenerationSettings,
                 f"fields ({category}: {reason}). Return ONLY the JSON object, "
                 f"with no markdown fences or explanation."
             )
-            messages = [*messages, {"role": "assistant", "content": last_raw},
-                        {"role": "user", "content": repair_note}]
+            messages = [
+                *messages,
+                {"role": "assistant", "content": last_raw},
+                {"role": "user", "content": repair_note},
+            ]
             repair_used = True
-            if category == "output_truncated" and max_new_tokens_override is None and gen.max_new_tokens is not None:
+            if (
+                category == "output_truncated"
+                and max_new_tokens_override is None
+                and gen.max_new_tokens is not None
+            ):
                 # Only a FIXED budget is doubled on retry; a dynamic budget is
                 # already the model's full remaining context, so there is
                 # nothing more to give it.
@@ -277,16 +340,30 @@ def enrich_one(handle: Any, function: dict[str, Any], gen: GenerationSettings,
 
         try:
             result = models.generate_text(
-                handle, messages, max_new_tokens=max_new_tokens, do_sample=gen.do_sample,
-                temperature=gen.temperature, top_p=gen.top_p,
+                handle,
+                messages,
+                max_new_tokens=max_new_tokens,
+                do_sample=gen.do_sample,
+                temperature=gen.temperature,
+                top_p=gen.top_p,
                 repetition_penalty=gen.repetition_penalty,
             )
         except torch.cuda.OutOfMemoryError as exc:
             torch.cuda.empty_cache()
-            _log_attempt(attempts_log_path, function_id=function.get("id", ""), attempt=attempt_index,
-                         category="cuda_oom", reason=str(exc), input_tokens=input_tokens,
-                         output_tokens=None, latency_s=None, finish_reason=None,
-                         peak_allocated_gib=None, prompt_reductions=reductions, raw_response=None)
+            _log_attempt(
+                attempts_log_path,
+                function_id=function.get("id", ""),
+                attempt=attempt_index,
+                category="cuda_oom",
+                reason=str(exc),
+                input_tokens=input_tokens,
+                output_tokens=None,
+                latency_s=None,
+                finish_reason=None,
+                peak_allocated_gib=None,
+                prompt_reductions=reductions,
+                raw_response=None,
+            )
             # OOM is a resource issue, not a content-quality issue: give it one
             # dedicated recovery retry with the most-reduced prompt and a
             # halved output budget, independent of the JSON-repair retry loop
@@ -298,27 +375,42 @@ def enrich_one(handle: Any, function: dict[str, Any], gen: GenerationSettings,
             try:
                 retry_view = _fully_reduced_view(function)
                 retry_messages, retry_input_tokens, retry_reductions = build_bounded_messages(
-                    retry_view, handle.tokenizer, handle.spec, gen.prompt_variant,
-                    models.memory_input_cap(handle) if handle.spec.max_input_tokens is None else None,
+                    retry_view,
+                    handle.tokenizer,
+                    handle.spec,
+                    gen.prompt_variant,
+                    models.memory_input_cap(handle)
+                    if handle.spec.max_input_tokens is None
+                    else None,
                 )
                 result = models.generate_text(
-                    handle, retry_messages, max_new_tokens=retry_max_new_tokens,
-                    do_sample=gen.do_sample, temperature=gen.temperature, top_p=gen.top_p,
+                    handle,
+                    retry_messages,
+                    max_new_tokens=retry_max_new_tokens,
+                    do_sample=gen.do_sample,
+                    temperature=gen.temperature,
+                    top_p=gen.top_p,
                     repetition_penalty=gen.repetition_penalty,
                 )
             except torch.cuda.OutOfMemoryError as retry_exc:
                 torch.cuda.empty_cache()
                 free_gib_after = min(
                     torch.cuda.mem_get_info(i)[0] for i in range(torch.cuda.device_count())
-                ) / (1024 ** 3)
+                ) / (1024**3)
                 _log_attempt(
-                    attempts_log_path, function_id=function.get("id", ""), attempt=attempt_index,
+                    attempts_log_path,
+                    function_id=function.get("id", ""),
+                    attempt=attempt_index,
                     category="cuda_oom",
                     reason=f"OOM persisted after reduced-budget retry (free_after_gib="
-                           f"{free_gib_after:.2f}): {retry_exc}",
-                    input_tokens=retry_input_tokens, output_tokens=None, latency_s=None,
-                    finish_reason=None, peak_allocated_gib=None,
-                    prompt_reductions=reductions + ["oom_retry_fully_reduced"], raw_response=None,
+                    f"{free_gib_after:.2f}): {retry_exc}",
+                    input_tokens=retry_input_tokens,
+                    output_tokens=None,
+                    latency_s=None,
+                    finish_reason=None,
+                    peak_allocated_gib=None,
+                    prompt_reductions=reductions + ["oom_retry_fully_reduced"],
+                    raw_response=None,
                 )
                 if free_gib_after < 1.0:
                     raise GenerationOOMError(
@@ -344,10 +436,20 @@ def enrich_one(handle: Any, function: dict[str, Any], gen: GenerationSettings,
                 prompt_reductions = reductions
         except Exception as exc:  # noqa: BLE001 - isolated per-attempt, retried
             category, reason = "generation_error", f"{type(exc).__name__}: {exc}"
-            _log_attempt(attempts_log_path, function_id=function.get("id", ""), attempt=attempt_index,
-                         category=category, reason=reason, input_tokens=input_tokens,
-                         output_tokens=None, latency_s=None, finish_reason=None,
-                         peak_allocated_gib=None, prompt_reductions=reductions, raw_response=None)
+            _log_attempt(
+                attempts_log_path,
+                function_id=function.get("id", ""),
+                attempt=attempt_index,
+                category=category,
+                reason=reason,
+                input_tokens=input_tokens,
+                output_tokens=None,
+                latency_s=None,
+                finish_reason=None,
+                peak_allocated_gib=None,
+                prompt_reductions=reductions,
+                raw_response=None,
+            )
             continue
 
         generation_success_any = True
@@ -363,11 +465,20 @@ def enrich_one(handle: Any, function: dict[str, Any], gen: GenerationSettings,
         if parsed is None:
             category = "output_truncated" if result.finish_reason == "length" else "invalid_json"
             reason = parse_reason
-            _log_attempt(attempts_log_path, function_id=function.get("id", ""), attempt=attempt_index,
-                         category=category, reason=reason, input_tokens=result.input_tokens,
-                         output_tokens=result.output_tokens, latency_s=result.latency_s,
-                         finish_reason=result.finish_reason, peak_allocated_gib=result.peak_allocated_gib,
-                         prompt_reductions=reductions, raw_response=result.text)
+            _log_attempt(
+                attempts_log_path,
+                function_id=function.get("id", ""),
+                attempt=attempt_index,
+                category=category,
+                reason=reason,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                latency_s=result.latency_s,
+                finish_reason=result.finish_reason,
+                peak_allocated_gib=result.peak_allocated_gib,
+                prompt_reductions=reductions,
+                raw_response=result.text,
+            )
             continue
 
         # A successfully-parsed JSON object is accepted as the model's
@@ -384,18 +495,29 @@ def enrich_one(handle: Any, function: dict[str, Any], gen: GenerationSettings,
         reason = "valid" if schema_valid else f"accepted_with_schema_gap:{schema_reason}"
         parsed_enrichment = parsed
         parse_source = parse_reason
-        _log_attempt(attempts_log_path, function_id=function.get("id", ""), attempt=attempt_index,
-                     category=category, reason=reason, input_tokens=result.input_tokens,
-                     output_tokens=result.output_tokens, latency_s=result.latency_s,
-                     finish_reason=result.finish_reason, peak_allocated_gib=result.peak_allocated_gib,
-                     prompt_reductions=reductions, raw_response=result.text)
+        _log_attempt(
+            attempts_log_path,
+            function_id=function.get("id", ""),
+            attempt=attempt_index,
+            category=category,
+            reason=reason,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            latency_s=result.latency_s,
+            finish_reason=result.finish_reason,
+            peak_allocated_gib=result.peak_allocated_gib,
+            prompt_reductions=reductions,
+            raw_response=result.text,
+        )
         break
 
     retry_count = max(0, attempts_made - 1)
     if category == "completed" and parsed_enrichment is not None:
         result_enrichment = {
-            **parsed_enrichment, "model": handle.spec.model_id,
-            "status": "completed", "json_parse_status": "recovered",
+            **parsed_enrichment,
+            "model": handle.spec.model_id,
+            "status": "completed",
+            "json_parse_status": "recovered",
         }
     else:
         # Never fabricate content: no "Insufficient implementation context.",
@@ -408,7 +530,11 @@ def enrich_one(handle: Any, function: dict[str, Any], gen: GenerationSettings,
         # raw_llm_response field) regardless of this outcome.
         result_enrichment = _no_content_enrichment(handle.spec.model_id)
 
-    total_tokens = (last_input_tokens or 0) + total_output_tokens if (last_input_tokens or total_output_tokens) else None
+    total_tokens = (
+        (last_input_tokens or 0) + total_output_tokens
+        if (last_input_tokens or total_output_tokens)
+        else None
+    )
     result_enrichment["usage"] = {
         "prompt_tokens": last_input_tokens or None,
         "completion_tokens": total_output_tokens or None,
@@ -434,8 +560,8 @@ def enrich_one(handle: Any, function: dict[str, Any], gen: GenerationSettings,
         "latency_seconds": total_latency,
         "generated_tokens": total_output_tokens,
     }
-    cfg = (function.get("cfg") or {})
-    llvm_cfg = ((function.get("llvm") or {}).get("cfg") or {})
+    cfg = function.get("cfg") or {}
+    llvm_cfg = (function.get("llvm") or {}).get("cfg") or {}
     context = {
         "source_code": bool(function.get("source_code")),
         "ast": bool(function.get("ast")),
@@ -456,24 +582,26 @@ def enrich_one(handle: Any, function: dict[str, Any], gen: GenerationSettings,
 
     load_report = getattr(handle, "load_report", None) or {}
     result_enrichment["evaluation"] = _evaluation(function, result_enrichment, metrics, context)
-    result_enrichment["evaluation"].update({
-        "failure_category": None if category == "completed" else category,
-        "failure_reason": None if category == "completed" else reason,
-        "finish_reason": last_finish_reason,
-        # Always preserved -- success or failure -- never just on failure:
-        # this is the exact text the model produced, for every function.
-        "raw_response": last_raw or None,
-        "repair_used": repair_used,
-        "peak_allocated_gib": last_peak_gib,
-        "free_after_gib": last_free_gib,
-        # GPU placement is constant across every function in one model's run
-        # (it is decided once, at load time), but recorded per function here
-        # too so per-function metrics rows are self-contained for comparison
-        # tooling that reads function-level records in isolation.
-        "gpu_placement": load_report.get("gpu_placement"),
-        "gpu_count_used": load_report.get("gpu_count_used"),
-        "used_cpu_offload": load_report.get("used_cpu_offload", False),
-    })
+    result_enrichment["evaluation"].update(
+        {
+            "failure_category": None if category == "completed" else category,
+            "failure_reason": None if category == "completed" else reason,
+            "finish_reason": last_finish_reason,
+            # Always preserved -- success or failure -- never just on failure:
+            # this is the exact text the model produced, for every function.
+            "raw_response": last_raw or None,
+            "repair_used": repair_used,
+            "peak_allocated_gib": last_peak_gib,
+            "free_after_gib": last_free_gib,
+            # GPU placement is constant across every function in one model's run
+            # (it is decided once, at load time), but recorded per function here
+            # too so per-function metrics rows are self-contained for comparison
+            # tooling that reads function-level records in isolation.
+            "gpu_placement": load_report.get("gpu_placement"),
+            "gpu_count_used": load_report.get("gpu_count_used"),
+            "used_cpu_offload": load_report.get("used_cpu_offload", False),
+        }
+    )
     return result_enrichment
 
 
@@ -485,7 +613,7 @@ class Checkpoint:
 
     def __init__(self, path: Path):
         self.path = Path(path)
-        self.header: Optional[dict[str, Any]] = None
+        self.header: dict[str, Any] | None = None
         self._records: dict[str, dict[str, Any]] = {}
 
     def open_or_create(self, header: dict[str, Any]) -> None:
@@ -537,9 +665,12 @@ class Checkpoint:
         if record is None:
             return False
         enrichment = record.get("enrichment", {})
-        return record.get("status") == "completed" and enrichment.get("evaluation", {}).get("json_valid") is True
+        return (
+            record.get("status") == "completed"
+            and enrichment.get("evaluation", {}).get("json_valid") is True
+        )
 
-    def get(self, function_id: str) -> Optional[dict[str, Any]]:
+    def get(self, function_id: str) -> dict[str, Any] | None:
         return self._records.get(function_id)
 
     def all_ids(self) -> set[str]:
@@ -552,9 +683,12 @@ class Checkpoint:
         prior = self._records.get(function_id)
         round_num = (prior.get("round", 0) + 1) if prior else 1
         record = {
-            "type": "function", "function_id": function_id,
-            "status": enrichment.get("status"), "enrichment": enrichment,
-            "round": round_num, "written_at": _now_iso(),
+            "type": "function",
+            "function_id": function_id,
+            "status": enrichment.get("status"),
+            "enrichment": enrichment,
+            "round": round_num,
+            "written_at": _now_iso(),
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as handle:
@@ -564,8 +698,16 @@ class Checkpoint:
         self._records[function_id] = record
 
 
-def materialize(ctx: Any, snap: Any, spec: Any, gen: GenerationSettings, ckpt: Checkpoint,
-                 elapsed: float, partial: bool, load_report: Optional[dict[str, Any]] = None) -> Path:
+def materialize(
+    ctx: Any,
+    snap: Any,
+    spec: Any,
+    gen: GenerationSettings,
+    ckpt: Checkpoint,
+    elapsed: float,
+    partial: bool,
+    load_report: dict[str, Any] | None = None,
+) -> Path:
     """Rebuild enhanced_<slug>.json from base.json + the checkpoint. Always
     safe to call (even mid-run): a torn enhanced_*.json can never lose work
     because the checkpoint, not this file, is authoritative.
@@ -629,25 +771,38 @@ def materialize(ctx: Any, snap: Any, spec: Any, gen: GenerationSettings, ckpt: C
             failure_categories[category] = failure_categories.get(category, 0) + 1
 
     result["enrichment_metadata"] = {
-        "provider": "Hugging Face Transformers", "model": spec.model_id,
-        "model_slug": spec.slug, "resolved_commit_hash": load_report.get("resolved_commit_hash"),
-        "quantization": spec.quantization, "total_functions": len(functions),
-        "enriched_functions": enriched_count, "failed_functions": failed_count,
-        "partial": partial, "started_at": (ckpt.header or {}).get("created_at"),
+        "provider": "Hugging Face Transformers",
+        "model": spec.model_id,
+        "model_slug": spec.slug,
+        "resolved_commit_hash": load_report.get("resolved_commit_hash"),
+        "quantization": spec.quantization,
+        "total_functions": len(functions),
+        "enriched_functions": enriched_count,
+        "failed_functions": failed_count,
+        "partial": partial,
+        "started_at": (ckpt.header or {}).get("created_at"),
         "completed_at": _now_iso(),
         "gpu_placement": load_report.get("gpu_placement"),
         "gpu_count_used": load_report.get("gpu_count_used"),
         "used_cpu_offload": load_report.get("used_cpu_offload", False),
     }
     result["experiment"] = {
-        "dataset": getattr(snap, "dataset", None), "model": spec.model_id,
-        "model_slug": spec.slug, "quantization": spec.quantization,
+        "dataset": getattr(snap, "dataset", None),
+        "model": spec.model_id,
+        "model_slug": spec.slug,
+        "quantization": spec.quantization,
         "temperature": gen.temperature if gen.do_sample else None,
-        "do_sample": gen.do_sample, "batch_size": 1, "prompt_version": "v2",
-        "prompt_variant": gen.prompt_variant, "schema_version": "v1",
-        "base_json_url": snap.url, "base_sha256": snap.sha256,
-        "config_hash": config_hash(spec, gen), "optima_commit": getattr(ctx, "optima_commit", None),
-        "max_new_tokens": gen.max_new_tokens, "retries": gen.retries,
+        "do_sample": gen.do_sample,
+        "batch_size": 1,
+        "prompt_version": "v2",
+        "prompt_variant": gen.prompt_variant,
+        "schema_version": "v1",
+        "base_json_url": snap.url,
+        "base_sha256": snap.sha256,
+        "config_hash": config_hash(spec, gen),
+        "optima_commit": getattr(ctx, "optima_commit", None),
+        "max_new_tokens": gen.max_new_tokens,
+        "retries": gen.retries,
         "max_input_tokens": spec.max_input_tokens,
         "output_dir": str(getattr(ctx, "run_dir", "")) or None,
     }
@@ -667,15 +822,22 @@ def materialize(ctx: Any, snap: Any, spec: Any, gen: GenerationSettings, ckpt: C
 # Smoke-test gates
 # --------------------------------------------------------------------------
 
-def _select_gate3_function(functions: list[dict[str, Any]],
-                            smoke_function_ids: Optional[list[str]]) -> dict[str, Any]:
+
+def _select_gate3_function(
+    functions: list[dict[str, Any]], smoke_function_ids: list[str] | None
+) -> dict[str, Any]:
     if smoke_function_ids:
         by_id = {f["id"]: f for f in functions}
         if smoke_function_ids[0] not in by_id:
-            raise KeyError(f"SMOKE_FUNCTION_IDS[0]={smoke_function_ids[0]!r} not found in base.json.")
+            raise KeyError(
+                f"SMOKE_FUNCTION_IDS[0]={smoke_function_ids[0]!r} not found in base.json."
+            )
         return by_id[smoke_function_ids[0]]
-    candidates = [f for f in functions
-                  if f.get("analysis_status") == "success" and len(f.get("source_code") or "") >= 200]
+    candidates = [
+        f
+        for f in functions
+        if f.get("analysis_status") == "success" and len(f.get("source_code") or "") >= 200
+    ]
     if not candidates:
         candidates = [f for f in functions if f.get("source_code")]
     if not candidates:
@@ -684,9 +846,14 @@ def _select_gate3_function(functions: list[dict[str, Any]],
     return candidates[len(candidates) // 2]
 
 
-def _select_gate4_functions(functions: list[dict[str, Any]], tokenizer: Any, spec: Any,
-                             gen: GenerationSettings, gate3_function: dict[str, Any],
-                             smoke_function_ids: Optional[list[str]]) -> list[dict[str, Any]]:
+def _select_gate4_functions(
+    functions: list[dict[str, Any]],
+    tokenizer: Any,
+    spec: Any,
+    gen: GenerationSettings,
+    gate3_function: dict[str, Any],
+    smoke_function_ids: list[str] | None,
+) -> list[dict[str, Any]]:
     if smoke_function_ids and len(smoke_function_ids) >= 3:
         by_id = {f["id"]: f for f in functions}
         missing = [fid for fid in smoke_function_ids[:3] if fid not in by_id]
@@ -698,8 +865,12 @@ def _select_gate4_functions(functions: list[dict[str, Any]], tokenizer: Any, spe
     seen_ids = {gate3_function["id"]}
 
     other_status = sorted(
-        (f for f in functions
-         if f.get("analysis_status") in ("source_only", "llvm_function_not_found") and f["id"] not in seen_ids),
+        (
+            f
+            for f in functions
+            if f.get("analysis_status") in ("source_only", "llvm_function_not_found")
+            and f["id"] not in seen_ids
+        ),
         key=lambda f: f["id"],
     )
     if other_status:
@@ -711,7 +882,9 @@ def _select_gate4_functions(functions: list[dict[str, Any]], tokenizer: Any, spe
         if fn["id"] in seen_ids:
             continue
         try:
-            _messages, tokens, _reductions = build_bounded_messages(fn, tokenizer, spec, gen.prompt_variant)
+            _messages, tokens, _reductions = build_bounded_messages(
+                fn, tokenizer, spec, gen.prompt_variant
+            )
         except Exception:  # noqa: BLE001 - selection helper only, real failures surface during the gate
             continue
         if tokens > largest_tokens:
@@ -730,17 +903,24 @@ def _select_gate4_functions(functions: list[dict[str, Any]], tokenizer: Any, spe
     return selected[:3]
 
 
-def record_gate(ctx: Any, spec: Any, gen: GenerationSettings, name: str, passed: bool,
-                 details: dict[str, Any]) -> dict[str, Any]:
+def record_gate(
+    ctx: Any, spec: Any, gen: GenerationSettings, name: str, passed: bool, details: dict[str, Any]
+) -> dict[str, Any]:
     gate_dir = ctx.smoke_dir / spec.slug
     gate_dir.mkdir(parents=True, exist_ok=True)
     payload = {
-        "name": name, "passed": passed, "details": details,
+        "name": name,
+        "passed": passed,
+        "details": details,
         "spec": {"slug": spec.slug, "model_id": spec.model_id, "quantization": spec.quantization},
-        "config_hash": config_hash(spec, gen), "base_sha256": ctx.base.sha256,
-        "session_id": ctx.session_id, "timestamp": _now_iso(),
+        "config_hash": config_hash(spec, gen),
+        "base_sha256": ctx.base.sha256,
+        "session_id": ctx.session_id,
+        "timestamp": _now_iso(),
     }
-    (gate_dir / f"{name}.json").write_text(json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8")
+    (gate_dir / f"{name}.json").write_text(
+        json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8"
+    )
 
     all_path = gate_dir / "gates.json"
     all_gates = json.loads(all_path.read_text(encoding="utf-8")) if all_path.exists() else {}
@@ -757,7 +937,9 @@ def require_all_gates_passed(ctx: Any, spec: Any, gen: GenerationSettings) -> No
     gate_dir = ctx.smoke_dir / spec.slug
     all_path = gate_dir / "gates.json"
     if not all_path.exists():
-        raise GateFailedError("gates", f"No gate records found for {spec.slug}; run gates 1-4 first.")
+        raise GateFailedError(
+            "gates", f"No gate records found for {spec.slug}; run gates 1-4 first."
+        )
     all_gates = json.loads(all_path.read_text(encoding="utf-8"))
     expected_hash = config_hash(spec, gen)
     for name in REQUIRED_GATES:
@@ -766,15 +948,19 @@ def require_all_gates_passed(ctx: Any, spec: Any, gen: GenerationSettings) -> No
             raise GateFailedError("gates", f"{name} has not passed for {spec.slug}.")
         if record.get("config_hash") != expected_hash:
             raise GateFailedError(
-                "gates", f"{name} was recorded with config_hash={record.get('config_hash')} "
-                f"but the current config_hash={expected_hash}; re-run the gates."
+                "gates",
+                f"{name} was recorded with config_hash={record.get('config_hash')} "
+                f"but the current config_hash={expected_hash}; re-run the gates.",
             )
         if record.get("base_sha256") != ctx.base.sha256:
-            raise GateFailedError("gates", f"{name} was recorded for a different base.json snapshot.")
+            raise GateFailedError(
+                "gates", f"{name} was recorded for a different base.json snapshot."
+            )
         if name == "gate1_load" and record.get("session_id") != ctx.session_id:
             raise GateFailedError(
-                "gates", "gate1_load was recorded in a different session; re-run GATE 1 in "
-                "this session before starting a full run."
+                "gates",
+                "gate1_load was recorded in a different session; re-run GATE 1 in "
+                "this session before starting a full run.",
             )
     print(f"All gates passed for {spec.slug} (config_hash={expected_hash}).")
 
@@ -823,22 +1009,33 @@ def gate2_trivial(ctx: Any, handle: Any, gen: GenerationSettings) -> dict[str, A
     try:
         result = models.generate_text(handle, messages, max_new_tokens=64, do_sample=False)
     except Exception as exc:  # noqa: BLE001 - a smoke-test gate reports, then stops the notebook
-        return record_gate(ctx, handle.spec, gen, "gate2_trivial", False,
-                            {"error": f"{type(exc).__name__}: {exc}"})
+        return record_gate(
+            ctx, handle.spec, gen, "gate2_trivial", False, {"error": f"{type(exc).__name__}: {exc}"}
+        )
     passed = bool(result.text.strip()) and any(ch.isalpha() for ch in result.text)
     details = {
-        "input_tokens": result.input_tokens, "output_tokens": result.output_tokens,
+        "input_tokens": result.input_tokens,
+        "output_tokens": result.output_tokens,
         "latency_s": result.latency_s,
-        "tokens_per_second": round(result.output_tokens / result.latency_s, 2) if result.latency_s else None,
-        "peak_allocated_gib": result.peak_allocated_gib, "free_after_gib": result.free_after_gib,
-        "finish_reason": result.finish_reason, "text": result.text,
+        "tokens_per_second": round(result.output_tokens / result.latency_s, 2)
+        if result.latency_s
+        else None,
+        "peak_allocated_gib": result.peak_allocated_gib,
+        "free_after_gib": result.free_after_gib,
+        "finish_reason": result.finish_reason,
+        "text": result.text,
     }
     return record_gate(ctx, handle.spec, gen, "gate2_trivial", passed, details)
 
 
-def gate3_one_function(ctx: Any, handle: Any, gen: GenerationSettings, snap: Any,
-                        smoke_function_ids: Optional[list[str]] = None,
-                        max_new_tokens_override: Optional[int] = None) -> dict[str, Any]:
+def gate3_one_function(
+    ctx: Any,
+    handle: Any,
+    gen: GenerationSettings,
+    snap: Any,
+    smoke_function_ids: list[str] | None = None,
+    max_new_tokens_override: int | None = None,
+) -> dict[str, Any]:
     from colab.colab_pipeline import flatten_functions, load_json
 
     _require_handle(handle, "gate3_one_function")
@@ -847,11 +1044,19 @@ def gate3_one_function(ctx: Any, handle: Any, gen: GenerationSettings, snap: Any
     fn = _select_gate3_function(functions, smoke_function_ids)
 
     ckpt = Checkpoint(ctx.smoke_dir / handle.spec.slug / "gate3.checkpoint.jsonl")
-    ckpt.open_or_create({"base_sha256": ctx.base.sha256, "config_hash": config_hash(handle.spec, gen),
-                         "model_slug": handle.spec.slug, "created_at": _now_iso()})
+    ckpt.open_or_create(
+        {
+            "base_sha256": ctx.base.sha256,
+            "config_hash": config_hash(handle.spec, gen),
+            "model_slug": handle.spec.slug,
+            "created_at": _now_iso(),
+        }
+    )
 
     attempts_log = ctx.logs_dir / handle.spec.slug / "attempts.jsonl"
-    enrichment = enrich_one(handle, fn, gen, attempts_log, max_new_tokens_override=max_new_tokens_override)
+    enrichment = enrich_one(
+        handle, fn, gen, attempts_log, max_new_tokens_override=max_new_tokens_override
+    )
     ckpt.append(fn["id"], enrichment)
 
     evaluation = enrichment.get("evaluation", {})
@@ -864,54 +1069,79 @@ def gate3_one_function(ctx: Any, handle: Any, gen: GenerationSettings, snap: Any
         enrichment.get("status") == "completed"
         and (evaluation.get("input_tokens") or 0) > 0
         and (evaluation.get("output_tokens") or 0) > 0
-        and (evaluation.get("finish_reason") == "eos"
-             # Small models may emit valid JSON then ramble (e.g. echo the
-             # prompt rules) until the token cap; the JSON is still usable.
-             or (evaluation.get("finish_reason") == "length" and evaluation.get("json_valid")))
+        and (
+            evaluation.get("finish_reason") == "eos"
+            # Small models may emit valid JSON then ramble (e.g. echo the
+            # prompt rules) until the token cap; the JSON is still usable.
+            or (evaluation.get("finish_reason") == "length" and evaluation.get("json_valid"))
+        )
     )
     details = {
-        "function_id": fn["id"], "function_name": fn.get("name"),
+        "function_id": fn["id"],
+        "function_name": fn.get("name"),
         "analysis_status": fn.get("analysis_status"),
-        "input_tokens": evaluation.get("input_tokens"), "output_tokens": evaluation.get("output_tokens"),
+        "input_tokens": evaluation.get("input_tokens"),
+        "output_tokens": evaluation.get("output_tokens"),
         "latency_seconds": evaluation.get("latency_seconds"),
         "prompt_reductions": evaluation.get("context_metrics", {}).get("prompt_reductions"),
         "raw_response": evaluation.get("raw_response"),
         "parsed_enrichment": {k: v for k, v in enrichment.items() if k != "evaluation"},
-        "json_valid": evaluation.get("json_valid"), "request_success": evaluation.get("request_success"),
-        "generation_success": evaluation.get("generation_success"), "retry_count": evaluation.get("retry_count"),
-        "failure_category": evaluation.get("failure_category"), "failure_reason": evaluation.get("failure_reason"),
+        "json_valid": evaluation.get("json_valid"),
+        "request_success": evaluation.get("request_success"),
+        "generation_success": evaluation.get("generation_success"),
+        "retry_count": evaluation.get("retry_count"),
+        "failure_category": evaluation.get("failure_category"),
+        "failure_reason": evaluation.get("failure_reason"),
         "finish_reason": evaluation.get("finish_reason"),
-        "peak_allocated_gib": evaluation.get("peak_allocated_gib"), "free_after_gib": evaluation.get("free_after_gib"),
+        "peak_allocated_gib": evaluation.get("peak_allocated_gib"),
+        "free_after_gib": evaluation.get("free_after_gib"),
     }
     print(json.dumps(details, indent=2, default=str)[:4000])
     return record_gate(ctx, handle.spec, gen, "gate3_one_function", passed, details)
 
 
-def gate4_three_functions(ctx: Any, handle: Any, gen: GenerationSettings, snap: Any,
-                           smoke_function_ids: Optional[list[str]] = None,
-                           max_new_tokens_override: Optional[int] = None) -> dict[str, Any]:
+def gate4_three_functions(
+    ctx: Any,
+    handle: Any,
+    gen: GenerationSettings,
+    snap: Any,
+    smoke_function_ids: list[str] | None = None,
+    max_new_tokens_override: int | None = None,
+) -> dict[str, Any]:
     """``max_new_tokens_override``, if given, bounds the actual generation
     budget for this smoke test without changing ``gen``/``config_hash`` --
     see ``enrich_one`` docstring. Left as ``None`` by default, matching the
     full run: no artificial cap.
     """
-    from optima.enricher import _dataset_metrics
     from colab.colab_pipeline import flatten_functions, load_json
+    from optima.enricher import _dataset_metrics
 
     _require_handle(handle, "gate4_three_functions")
     base = load_json(snap.path)
     functions = flatten_functions(base)
-    gate3_fn = _select_gate3_function(functions, smoke_function_ids[:1] if smoke_function_ids else None)
-    selected = _select_gate4_functions(functions, handle.tokenizer, handle.spec, gen, gate3_fn, smoke_function_ids)
+    gate3_fn = _select_gate3_function(
+        functions, smoke_function_ids[:1] if smoke_function_ids else None
+    )
+    selected = _select_gate4_functions(
+        functions, handle.tokenizer, handle.spec, gen, gate3_fn, smoke_function_ids
+    )
 
     ckpt = Checkpoint(ctx.smoke_dir / handle.spec.slug / "gate4.checkpoint.jsonl")
-    ckpt.open_or_create({"base_sha256": ctx.base.sha256, "config_hash": config_hash(handle.spec, gen),
-                         "model_slug": handle.spec.slug, "created_at": _now_iso()})
+    ckpt.open_or_create(
+        {
+            "base_sha256": ctx.base.sha256,
+            "config_hash": config_hash(handle.spec, gen),
+            "model_slug": handle.spec.slug,
+            "created_at": _now_iso(),
+        }
+    )
 
     attempts_log = ctx.logs_dir / handle.spec.slug / "attempts.jsonl"
     records: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for fn in selected:
-        enrichment = enrich_one(handle, fn, gen, attempts_log, max_new_tokens_override=max_new_tokens_override)
+        enrichment = enrich_one(
+            handle, fn, gen, attempts_log, max_new_tokens_override=max_new_tokens_override
+        )
         ckpt.append(fn["id"], enrichment)
         records.append((fn, enrichment))
 
@@ -960,16 +1190,22 @@ def gate4_three_functions(ctx: Any, handle: Any, gen: GenerationSettings, snap: 
     status = "PASSED" if passed else "FAILED"
 
     details = {
-        "status": status, "checks": checks, "dataset_metrics_error": dataset_metrics_error,
+        "status": status,
+        "checks": checks,
+        "dataset_metrics_error": dataset_metrics_error,
         "functions": [
-            {"function_id": fn["id"], "status": e.get("status"), "purpose": e.get("purpose"),
-             "json_valid": e.get("evaluation", {}).get("json_valid"),
-             "failure_category": e.get("evaluation", {}).get("failure_category"),
-             "input_tokens": e.get("evaluation", {}).get("input_tokens"),
-             "output_tokens": e.get("evaluation", {}).get("output_tokens"),
-             # Informational only (not a check, not a warning, not part of
-             # `passed`): real GPU telemetry per function, for visibility.
-             "free_after_gib": e.get("evaluation", {}).get("free_after_gib")}
+            {
+                "function_id": fn["id"],
+                "status": e.get("status"),
+                "purpose": e.get("purpose"),
+                "json_valid": e.get("evaluation", {}).get("json_valid"),
+                "failure_category": e.get("evaluation", {}).get("failure_category"),
+                "input_tokens": e.get("evaluation", {}).get("input_tokens"),
+                "output_tokens": e.get("evaluation", {}).get("output_tokens"),
+                # Informational only (not a check, not a warning, not part of
+                # `passed`): real GPU telemetry per function, for visibility.
+                "free_after_gib": e.get("evaluation", {}).get("free_after_gib"),
+            }
             for fn, e in records
         ],
     }
@@ -982,8 +1218,10 @@ def gate4_three_functions(ctx: Any, handle: Any, gen: GenerationSettings, snap: 
 # Full enrichment
 # --------------------------------------------------------------------------
 
-def run_full_enrichment(ctx: Any, handle: Any, gen: GenerationSettings, snap: Any,
-                         materialize_every: int = 10) -> dict[str, Any]:
+
+def run_full_enrichment(
+    ctx: Any, handle: Any, gen: GenerationSettings, snap: Any, materialize_every: int = 10
+) -> dict[str, Any]:
     """Note: this does not gate on an overall success rate, or on how many
     functions in a row failed to produce anything useful. A model that
     genuinely fails on many (or even all) functions is a real comparison
@@ -1001,15 +1239,21 @@ def run_full_enrichment(ctx: Any, handle: Any, gen: GenerationSettings, snap: An
     require_all_gates_passed(ctx, handle.spec, gen)
 
     from colab.colab_pipeline import flatten_functions, load_json
+
     from . import environment
 
     slug = handle.spec.slug
     ckpt = Checkpoint(ctx.enriched_dir / f"{slug}.checkpoint.jsonl")
-    ckpt.open_or_create({
-        "base_sha256": ctx.base.sha256, "config_hash": config_hash(handle.spec, gen),
-        "model_id": handle.spec.model_id, "model_slug": slug,
-        "prompt_variant": gen.prompt_variant, "created_at": _now_iso(),
-    })
+    ckpt.open_or_create(
+        {
+            "base_sha256": ctx.base.sha256,
+            "config_hash": config_hash(handle.spec, gen),
+            "model_id": handle.spec.model_id,
+            "model_slug": slug,
+            "prompt_variant": gen.prompt_variant,
+            "created_at": _now_iso(),
+        }
+    )
 
     base = load_json(snap.path)
     functions = flatten_functions(base)
@@ -1023,15 +1267,18 @@ def run_full_enrichment(ctx: Any, handle: Any, gen: GenerationSettings, snap: An
 
     todo = [fn for fn in functions if not ckpt.is_completed(fn["id"])]
     already_completed = len(functions) - len(todo)
-    print(f"FULL ENRICHMENT [{slug}]: {len(functions)} total, "
-          f"{already_completed} already completed, {len(todo)} to do")
+    print(
+        f"FULL ENRICHMENT [{slug}]: {len(functions)} total, "
+        f"{already_completed} already completed, {len(todo)} to do"
+    )
 
     attempts_log = ctx.logs_dir / slug / "attempts.jsonl"
     partial = True
     start = time.perf_counter()
-    out_path: Optional[Path] = None
+    out_path: Path | None = None
     try:
         from tqdm.auto import tqdm
+
         for index, fn in enumerate(tqdm(todo, desc=f"Enriching with {slug}")):
             # enrich_one() never raises for a model-output problem (invalid
             # JSON, insufficient context, a schema gap, a recovered OOM,
@@ -1042,44 +1289,74 @@ def run_full_enrichment(ctx: Any, handle: Any, gen: GenerationSettings, snap: An
             enrichment = enrich_one(handle, fn, gen, attempts_log)
             ckpt.append(fn["id"], enrichment)
             if (index + 1) % materialize_every == 0:
-                materialize(ctx, snap, handle.spec, gen, ckpt, time.perf_counter() - start, partial=True,
-                           load_report=handle.load_report)
+                materialize(
+                    ctx,
+                    snap,
+                    handle.spec,
+                    gen,
+                    ckpt,
+                    time.perf_counter() - start,
+                    partial=True,
+                    load_report=handle.load_report,
+                )
             if (index + 1) % 10 == 0:
                 environment.gpu_report(f"{slug}: after {index + 1}/{len(todo)}", ctx.gpu_log_path)
         partial = False
     finally:
         elapsed = time.perf_counter() - start
-        out_path = materialize(ctx, snap, handle.spec, gen, ckpt, elapsed, partial=partial,
-                              load_report=handle.load_report)
+        out_path = materialize(
+            ctx,
+            snap,
+            handle.spec,
+            gen,
+            ckpt,
+            elapsed,
+            partial=partial,
+            load_report=handle.load_report,
+        )
         if partial:
             ctx.set_model_status(slug, "enrichment_incomplete", {"enriched_json": str(out_path)})
 
     from colab.colab_pipeline import load_json as _load_json
+
     materialized = _load_json(out_path)
     metrics = materialized["enrichment_metrics"]
     success_rate = metrics.get("success_rate", 0.0)
     categories = metrics.get("failure_categories", {})
-    print(f"FULL ENRICHMENT [{slug}] done: success_rate={success_rate:.3f}, "
-          f"failure_categories={categories}")
+    print(
+        f"FULL ENRICHMENT [{slug}] done: success_rate={success_rate:.3f}, "
+        f"failure_categories={categories}"
+    )
 
     # The run completing (not partial) is itself the pass condition. A low
     # success_rate is recorded and printed, not treated as a pipeline
     # failure -- it is exactly the kind of result a model comparison exists
     # to capture, and must not block embeddings/retrieval/evaluation from
     # running on whatever this model actually produced.
-    ctx.set_model_status(slug, "enrichment_passed",
-                         {"success_rate": success_rate, "enriched_json": str(out_path)})
+    ctx.set_model_status(
+        slug, "enrichment_passed", {"success_rate": success_rate, "enriched_json": str(out_path)}
+    )
 
     return {
-        "enriched_json": out_path, "metrics": metrics, "partial": partial,
-        "resumed_functions": already_completed, "processed_this_run": len(todo),
+        "enriched_json": out_path,
+        "metrics": metrics,
+        "partial": partial,
+        "resumed_functions": already_completed,
+        "processed_this_run": len(todo),
     }
 
 
-def run_model_queue(ctx: Any, model_queue: list[str], gen_settings_factory: Any, bnb_status: Any,
-                     num_gpus: Optional[int] = None, stop_on_failure: bool = True,
-                     allow_infeasible: bool = False, delete_cache_after_unload: bool = True,
-                     materialize_every: int = 10) -> dict[str, Any]:
+def run_model_queue(
+    ctx: Any,
+    model_queue: list[str],
+    gen_settings_factory: Any,
+    bnb_status: Any,
+    num_gpus: int | None = None,
+    stop_on_failure: bool = True,
+    allow_infeasible: bool = False,
+    delete_cache_after_unload: bool = True,
+    materialize_every: int = 10,
+) -> dict[str, Any]:
     """Run check_fit -> load -> gates 1-4 -> full enrichment -> unload for
     each queued model slug, using the exact same functions the single-model
     notebook cells use. ``num_gpus`` defaults to ``torch.cuda.device_count()``
@@ -1092,6 +1369,7 @@ def run_model_queue(ctx: Any, model_queue: list[str], gen_settings_factory: Any,
 
     if num_gpus is None:
         import torch
+
         num_gpus = torch.cuda.device_count()
 
     results: dict[str, Any] = {}

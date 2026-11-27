@@ -12,15 +12,23 @@ import gc
 import hashlib
 import json
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SEMANTIC_FIELDS: Tuple[str, ...] = (
-    "purpose", "behavior", "summary", "inputs", "outputs", "side_effects",
-    "concepts", "keywords", "algorithm",
+SEMANTIC_FIELDS: tuple[str, ...] = (
+    "purpose",
+    "behavior",
+    "summary",
+    "inputs",
+    "outputs",
+    "side_effects",
+    "concepts",
+    "keywords",
+    "algorithm",
 )
 # Fields that must carry text for enrichment to count as usable.  ``inputs``
 # and friends are legitimately empty for many functions.
@@ -40,22 +48,22 @@ class FunctionRecord:
     file: str
     language: str = ""
     return_type: str = ""
-    parameters: Tuple[Tuple[str, str], ...] = ()
+    parameters: tuple[tuple[str, str], ...] = ()
     source_code: str = ""
     analysis_status: str = ""
     is_method: bool = False
     class_name: str = ""
     # Resolved call edges, by function ID, and unresolved (external) callee names.
-    calls: Tuple[str, ...] = ()
-    called_by: Tuple[str, ...] = ()
-    external_calls: Tuple[str, ...] = ()
-    dependencies: Tuple[Any, ...] = ()
-    cfg: Optional[Dict[str, Any]] = None
+    calls: tuple[str, ...] = ()
+    called_by: tuple[str, ...] = ()
+    external_calls: tuple[str, ...] = ()
+    dependencies: tuple[Any, ...] = ()
+    cfg: dict[str, Any] | None = None
     # Semantic enrichment (None when there is no enrichment record at all).
-    semantic: Optional[Dict[str, Any]] = None
-    enrichment_status: str = "missing"   # ok | empty | failed | missing
-    enriched_dependencies: Tuple[str, ...] = ()
-    enrichment_usage: Dict[str, float] = field(default_factory=dict)
+    semantic: dict[str, Any] | None = None
+    enrichment_status: str = "missing"  # ok | empty | failed | missing
+    enriched_dependencies: tuple[str, ...] = ()
+    enrichment_usage: dict[str, float] = field(default_factory=dict)
 
     @property
     def has_semantic(self) -> bool:
@@ -64,25 +72,29 @@ class FunctionRecord:
 
 @dataclass
 class Corpus:
-    records: Dict[str, FunctionRecord]
-    project: Dict[str, Any]
-    extra_edges: List[Tuple[str, str]]
-    meta: Dict[str, Any]
+    records: dict[str, FunctionRecord]
+    project: dict[str, Any]
+    extra_edges: list[tuple[str, str]]
+    meta: dict[str, Any]
 
     def __len__(self) -> int:
         return len(self.records)
 
     @property
-    def ids(self) -> List[str]:
+    def ids(self) -> list[str]:
         return list(self.records)
 
-    def enrichment_summary(self) -> Dict[str, Any]:
-        counts: Dict[str, int] = {"ok": 0, "empty": 0, "failed": 0, "missing": 0}
+    def enrichment_summary(self) -> dict[str, Any]:
+        counts: dict[str, int] = {"ok": 0, "empty": 0, "failed": 0, "missing": 0}
         for record in self.records.values():
             counts[record.enrichment_status] = counts.get(record.enrichment_status, 0) + 1
         total = len(self.records) or 1
-        usage = {"prompt_tokens": 0.0, "completion_tokens": 0.0, "total_tokens": 0.0,
-                 "latency_seconds": 0.0}
+        usage = {
+            "prompt_tokens": 0.0,
+            "completion_tokens": 0.0,
+            "total_tokens": 0.0,
+            "latency_seconds": 0.0,
+        }
         for record in self.records.values():
             for key in usage:
                 usage[key] += float(record.enrichment_usage.get(key, 0.0) or 0.0)
@@ -104,7 +116,7 @@ def file_sha256(path: Path, chunk: int = 1 << 24) -> str:
     return digest.hexdigest()
 
 
-def _read_json(path: Path) -> Dict[str, Any]:
+def _read_json(path: Path) -> dict[str, Any]:
     path = Path(path)
     if not path.is_file():
         raise CorpusError(f"JSON file not found: {path}")
@@ -122,7 +134,7 @@ def _read_json(path: Path) -> Dict[str, Any]:
     return data
 
 
-def _iter_functions(data: Dict[str, Any]) -> Iterable[Tuple[Dict[str, Any], Dict[str, Any]]]:
+def _iter_functions(data: dict[str, Any]) -> Iterable[tuple[dict[str, Any], dict[str, Any]]]:
     for file_data in data.get("files", []):
         if not isinstance(file_data, dict):
             continue
@@ -141,7 +153,7 @@ def _usable_text(value: Any) -> bool:
     return True
 
 
-def cfg_summary(cfg: Any) -> Optional[Dict[str, Any]]:
+def cfg_summary(cfg: Any) -> dict[str, Any] | None:
     """Summarise a CFG dict as blocks / edges / branching / loop presence."""
     if not isinstance(cfg, dict):
         return None
@@ -152,7 +164,7 @@ def cfg_summary(cfg: Any) -> Optional[Dict[str, Any]]:
     for edge in cfg.get("edges") or []:
         if isinstance(edge, dict) and "from" in edge and "to" in edge:
             edges.append((str(edge["from"]), str(edge["to"])))
-    successors: Dict[str, List[str]] = {n: [] for n in nodes}
+    successors: dict[str, list[str]] = {n: [] for n in nodes}
     for src, dst in edges:
         successors.setdefault(src, []).append(dst)
     entry = str(cfg.get("entry_node") or nodes[0])
@@ -165,11 +177,11 @@ def cfg_summary(cfg: Any) -> Optional[Dict[str, Any]]:
     }
 
 
-def _has_cycle(entry: str, successors: Dict[str, List[str]]) -> bool:
+def _has_cycle(entry: str, successors: dict[str, list[str]]) -> bool:
     """Iterative DFS back-edge detection from the entry block."""
     WHITE, GREY, BLACK = 0, 1, 2
-    colour: Dict[str, int] = {}
-    stack: List[Tuple[str, int]] = [(entry, 0)]
+    colour: dict[str, int] = {}
+    stack: list[tuple[str, int]] = [(entry, 0)]
     colour[entry] = GREY
     while stack:
         node, index = stack[-1]
@@ -189,10 +201,10 @@ def _has_cycle(entry: str, successors: Dict[str, List[str]]) -> bool:
     return False
 
 
-def _edge_ids(entries: Any, resolved_only: bool) -> Tuple[List[str], List[str]]:
+def _edge_ids(entries: Any, resolved_only: bool) -> tuple[list[str], list[str]]:
     """Split call entries into resolved IDs and unresolved callee names."""
-    ids: List[str] = []
-    names: List[str] = []
+    ids: list[str] = []
+    names: list[str] = []
     for entry in entries or []:
         if isinstance(entry, dict):
             ident = entry.get("id")
@@ -207,13 +219,14 @@ def _edge_ids(entries: Any, resolved_only: bool) -> Tuple[List[str], List[str]]:
     return list(dict.fromkeys(ids)), list(dict.fromkeys(names))
 
 
-def _extract_enrichment(func: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], str,
-                                                        Tuple[str, ...], Dict[str, float]]:
+def _extract_enrichment(
+    func: dict[str, Any],
+) -> tuple[dict[str, Any] | None, str, tuple[str, ...], dict[str, float]]:
     enrichment = func.get("enrichment")
     if not isinstance(enrichment, dict) or not enrichment:
         return None, "missing", (), {}
     semantic = {key: enrichment[key] for key in SEMANTIC_FIELDS if key in enrichment}
-    usage: Dict[str, float] = {}
+    usage: dict[str, float] = {}
     raw_usage = enrichment.get("usage")
     if isinstance(raw_usage, dict):
         for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
@@ -223,7 +236,7 @@ def _extract_enrichment(func: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]],
     if isinstance(evaluation, dict) and isinstance(evaluation.get("latency_seconds"), (int, float)):
         usage["latency_seconds"] = float(evaluation["latency_seconds"])
     deps = enrichment.get("dependencies")
-    enriched_deps: Tuple[str, ...] = ()
+    enriched_deps: tuple[str, ...] = ()
     if isinstance(deps, list):
         enriched_deps = tuple(str(d) for d in deps if isinstance(d, str) and d.strip())
     status = str(enrichment.get("status") or "").lower()
@@ -234,7 +247,7 @@ def _extract_enrichment(func: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]],
     return semantic, "ok", enriched_deps, usage
 
 
-def _record_from(file_data: Dict[str, Any], func: Dict[str, Any]) -> Optional[FunctionRecord]:
+def _record_from(file_data: dict[str, Any], func: dict[str, Any]) -> FunctionRecord | None:
     ident = func.get("id")
     if not ident or not isinstance(ident, str):
         return None
@@ -243,14 +256,16 @@ def _record_from(file_data: Dict[str, Any], func: Dict[str, Any]) -> Optional[Fu
     name = str(func.get("name") or qualified.split("::")[-1])
     calls, external = _edge_ids(func.get("calls"), resolved_only=True)
     called_by, _ = _edge_ids(func.get("called_by"), resolved_only=False)
-    params: List[Tuple[str, str]] = []
+    params: list[tuple[str, str]] = []
     for param in func.get("parameters") or []:
         if isinstance(param, dict):
             params.append((str(param.get("type") or ""), str(param.get("name") or "")))
     semantic, status, enriched_deps, usage = _extract_enrichment(func)
     deps = func.get("dependencies")
     return FunctionRecord(
-        id=ident, name=name, qualified_name=qualified,
+        id=ident,
+        name=name,
+        qualified_name=qualified,
         file=str(file_data.get("relative_path") or file_data.get("path") or ""),
         language=str(file_data.get("language") or ""),
         return_type=str(func.get("return_type") or ""),
@@ -259,16 +274,20 @@ def _record_from(file_data: Dict[str, Any], func: Dict[str, Any]) -> Optional[Fu
         analysis_status=str(func.get("analysis_status") or ""),
         is_method=bool(class_info.get("is_method")),
         class_name="::".join(qualified.split("::")[:-1]),
-        calls=tuple(calls), called_by=tuple(called_by), external_calls=tuple(external),
+        calls=tuple(calls),
+        called_by=tuple(called_by),
+        external_calls=tuple(external),
         dependencies=tuple(deps) if isinstance(deps, list) else (),
         cfg=cfg_summary(func.get("cfg")),
-        semantic=semantic, enrichment_status=status,
-        enriched_dependencies=enriched_deps, enrichment_usage=usage,
+        semantic=semantic,
+        enrichment_status=status,
+        enriched_dependencies=enriched_deps,
+        enrichment_usage=usage,
     )
 
 
 # ------------------------------------------------------------------- loading
-def load_corpus(base_json: Path, enriched_json: Optional[Path] = None) -> Corpus:
+def load_corpus(base_json: Path, enriched_json: Path | None = None) -> Corpus:
     """Build a :class:`Corpus` from ``base.json`` and an optional enriched file.
 
     The set of functions is exactly the set of IDs in ``base.json``.  Duplicate
@@ -279,8 +298,8 @@ def load_corpus(base_json: Path, enriched_json: Optional[Path] = None) -> Corpus
     base_json = Path(base_json)
     data = _read_json(base_json)
     project = data.get("project") if isinstance(data.get("project"), dict) else {}
-    records: Dict[str, FunctionRecord] = {}
-    duplicates: List[str] = []
+    records: dict[str, FunctionRecord] = {}
+    duplicates: list[str] = []
     skipped_no_id = 0
     for file_data, func in _iter_functions(data):
         record = _record_from(file_data, func)
@@ -292,7 +311,7 @@ def load_corpus(base_json: Path, enriched_json: Optional[Path] = None) -> Corpus
             continue
         records[record.id] = record
     graph = data.get("graph") if isinstance(data.get("graph"), dict) else {}
-    extra_edges: List[Tuple[str, str]] = []
+    extra_edges: list[tuple[str, str]] = []
     for edge in graph.get("call_edges") or []:
         if isinstance(edge, dict) and edge.get("from") and edge.get("to"):
             extra_edges.append((str(edge["from"]), str(edge["to"])))
@@ -301,7 +320,7 @@ def load_corpus(base_json: Path, enriched_json: Optional[Path] = None) -> Corpus
     if not records:
         raise CorpusError(f"{base_json} contains no functions with an 'id'")
 
-    meta: Dict[str, Any] = {
+    meta: dict[str, Any] = {
         "base_json": str(base_json),
         "base_sha256": file_sha256(base_json),
         "project": project.get("name", ""),
@@ -313,8 +332,11 @@ def load_corpus(base_json: Path, enriched_json: Optional[Path] = None) -> Corpus
         "enriched_json": None,
     }
     if duplicates:
-        logger.warning("%s: %d duplicate function IDs ignored (first occurrence kept)",
-                       base_json.name, len(duplicates))
+        logger.warning(
+            "%s: %d duplicate function IDs ignored (first occurrence kept)",
+            base_json.name,
+            len(duplicates),
+        )
 
     if enriched_json is not None:
         _join_enrichment(records, Path(enriched_json), meta)
@@ -323,11 +345,13 @@ def load_corpus(base_json: Path, enriched_json: Optional[Path] = None) -> Corpus
     return corpus
 
 
-def _join_enrichment(records: Dict[str, FunctionRecord], enriched_json: Path,
-                     meta: Dict[str, Any]) -> None:
+def _join_enrichment(
+    records: dict[str, FunctionRecord], enriched_json: Path, meta: dict[str, Any]
+) -> None:
     data = _read_json(enriched_json)
-    enrichment_meta = data.get("enrichment_metadata") if isinstance(
-        data.get("enrichment_metadata"), dict) else {}
+    enrichment_meta = (
+        data.get("enrichment_metadata") if isinstance(data.get("enrichment_metadata"), dict) else {}
+    )
     experiment = data.get("experiment") if isinstance(data.get("experiment"), dict) else {}
     seen: set = set()
     enriched_only = 0
@@ -354,11 +378,20 @@ def _join_enrichment(records: Dict[str, FunctionRecord], enriched_json: Path,
     meta["enriched_only_ids"] = enriched_only
     meta["enriched_duplicate_ids"] = duplicates
     meta["enrichment_model_reported"] = (
-        enrichment_meta.get("model") or experiment.get("model") or "")
+        enrichment_meta.get("model") or experiment.get("model") or ""
+    )
     meta["enrichment_run"] = {
         key: enrichment_meta.get(key)
-        for key in ("provider", "model", "quantization", "total_functions",
-                    "enriched_functions", "failed_functions", "started_at", "completed_at")
+        for key in (
+            "provider",
+            "model",
+            "quantization",
+            "total_functions",
+            "enriched_functions",
+            "failed_functions",
+            "started_at",
+            "completed_at",
+        )
         if key in enrichment_meta
     }
     if experiment.get("base_sha256") and experiment["base_sha256"] != meta["base_sha256"]:
@@ -366,7 +399,11 @@ def _join_enrichment(records: Dict[str, FunctionRecord], enriched_json: Path,
         logger.warning(
             "%s was enriched from a different base.json (sha %s != %s); "
             "IDs are joined by value, but results may not be comparable",
-            enriched_json.name, str(experiment["base_sha256"])[:12], meta["base_sha256"][:12])
+            enriched_json.name,
+            str(experiment["base_sha256"])[:12],
+            meta["base_sha256"][:12],
+        )
     if enriched_only:
-        logger.warning("%d enriched function IDs are not in base.json and were ignored",
-                       enriched_only)
+        logger.warning(
+            "%d enriched function IDs are not in base.json and were ignored", enriched_only
+        )

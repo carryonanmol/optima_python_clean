@@ -26,9 +26,9 @@ import urllib.error
 import urllib.request
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .errors import BaseJsonError, BenchmarkError, ExperimentIncompleteError
 
@@ -64,7 +64,7 @@ def _dataset_slug_from_base_json(data: Any, fallback: str) -> str:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _sha256_file(path: Path) -> str:
@@ -81,13 +81,13 @@ class BaseSnapshot:
     sha256: str
     bytes: int
     url: str
-    etag: Optional[str]
+    etag: str | None
     downloaded_at: str
     run_dir: Path
     # Dataset/test-suite slug this snapshot belongs to. Defaults to None
     # (not ``"unknown"``) so existing callers that construct a BaseSnapshot
     # directly (e.g. tests) without a dataset keep working unchanged.
-    dataset: Optional[str] = None
+    dataset: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -96,9 +96,11 @@ class BaseSnapshot:
         return data
 
 
-def _download_stream(url: str, dest: Path, timeout: float = 60.0, attempts: int = 3) -> tuple[str, int, Optional[str]]:
+def _download_stream(
+    url: str, dest: Path, timeout: float = 60.0, attempts: int = 3
+) -> tuple[str, int, str | None]:
     """Stream url to dest, retrying with backoff. Returns (sha256, bytes, etag)."""
-    last_error: Optional[Exception] = None
+    last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
         try:
             request = urllib.request.Request(url, headers={"User-Agent": "optima-kaggle/1.0"})
@@ -131,7 +133,7 @@ def _download_stream(url: str, dest: Path, timeout: float = 60.0, attempts: int 
         except (urllib.error.URLError, OSError) as exc:
             last_error = exc
             if attempt < attempts:
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
                 continue
     raise BaseJsonError(f"Failed to download {url} after {attempts} attempts: {last_error}")
 
@@ -139,7 +141,7 @@ def _download_stream(url: str, dest: Path, timeout: float = 60.0, attempts: int 
 def download_base_snapshot(
     url: str,
     output_root: Path,
-    expected_sha256: Optional[str] = None,
+    expected_sha256: str | None = None,
     timeout: float = 60.0,
     attempts: int = 3,
 ) -> BaseSnapshot:
@@ -151,7 +153,9 @@ def download_base_snapshot(
     downloads_dir = output_root / "downloads"
     part_path = downloads_dir / f"base-{uuid.uuid4().hex[:8]}.part"
     try:
-        sha256, num_bytes, etag = _download_stream(url, part_path, timeout=timeout, attempts=attempts)
+        sha256, num_bytes, etag = _download_stream(
+            url, part_path, timeout=timeout, attempts=attempts
+        )
         is_gzip = url.endswith(".gz")
         compressed_sha256 = sha256
         if is_gzip:
@@ -160,7 +164,9 @@ def download_base_snapshot(
                 with gzip.open(part_path, "rb") as src, decompressed_path.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
             except OSError as exc:
-                raise BaseJsonError(f"{url} looks gzip-compressed but could not be decompressed: {exc}")
+                raise BaseJsonError(
+                    f"{url} looks gzip-compressed but could not be decompressed: {exc}"
+                )
             sha256 = _sha256_file(decompressed_path)
             num_bytes = decompressed_path.stat().st_size
             part_path.unlink(missing_ok=True)
@@ -192,8 +198,13 @@ def download_base_snapshot(
             part_path.replace(base_path)
 
         snapshot = BaseSnapshot(
-            path=base_path, sha256=sha256, bytes=num_bytes, url=url, etag=etag,
-            downloaded_at=_now_iso(), run_dir=run_dir,
+            path=base_path,
+            sha256=sha256,
+            bytes=num_bytes,
+            url=url,
+            etag=etag,
+            downloaded_at=_now_iso(),
+            run_dir=run_dir,
         )
         meta = snapshot.as_dict()
         meta["compressed_sha256"] = compressed_sha256 if is_gzip else None
@@ -210,8 +221,8 @@ def download_base_snapshot(
 def load_base_snapshot(
     base_json: str,
     output_root: Path,
-    expected_sha256: Optional[str] = None,
-    dataset: Optional[str] = None,
+    expected_sha256: str | None = None,
+    dataset: str | None = None,
     timeout: float = 60.0,
     attempts: int = 3,
 ) -> BaseSnapshot:
@@ -242,7 +253,9 @@ def load_base_snapshot(
         downloads_dir = output_root / "downloads"
         part_path = downloads_dir / f"base-{uuid.uuid4().hex[:8]}.part"
         try:
-            sha256, num_bytes, etag = _download_stream(value, part_path, timeout=timeout, attempts=attempts)
+            sha256, num_bytes, etag = _download_stream(
+                value, part_path, timeout=timeout, attempts=attempts
+            )
             is_gzip = value.endswith(".gz")
             if is_gzip:
                 decompressed_path = part_path.with_suffix(".json")
@@ -250,7 +263,9 @@ def load_base_snapshot(
                     with gzip.open(part_path, "rb") as src, decompressed_path.open("wb") as dst:
                         shutil.copyfileobj(src, dst)
                 except OSError as exc:
-                    raise BaseJsonError(f"{value} looks gzip-compressed but could not be decompressed: {exc}")
+                    raise BaseJsonError(
+                        f"{value} looks gzip-compressed but could not be decompressed: {exc}"
+                    )
                 sha256 = _sha256_file(decompressed_path)
                 num_bytes = decompressed_path.stat().st_size
                 part_path.unlink(missing_ok=True)
@@ -270,9 +285,7 @@ def load_base_snapshot(
         else:
             source_path = source_path.resolve()
         if not source_path.exists():
-            raise BaseJsonError(
-                f"BASE_JSON={value!r} is neither a URL nor an existing local file."
-            )
+            raise BaseJsonError(f"BASE_JSON={value!r} is neither a URL nor an existing local file.")
         if not source_path.is_file():
             raise BaseJsonError(f"BASE_JSON={value!r} is not a file.")
         sha256 = _sha256_file(source_path)
@@ -295,7 +308,9 @@ def load_base_snapshot(
             part_path.unlink(missing_ok=True)
         raise BaseJsonError(f"{source_label} could not be parsed as JSON: {exc}") from exc
 
-    dataset_slug = safe_slug(dataset) if dataset else _dataset_slug_from_base_json(content, fallback_name)
+    dataset_slug = (
+        safe_slug(dataset) if dataset else _dataset_slug_from_base_json(content, fallback_name)
+    )
 
     # Dataset-addressed, human-readable path -- NOT content-hash-addressed --
     # so runs/<dataset>/... stays predictable across re-runs (matching the
@@ -327,18 +342,28 @@ def load_base_snapshot(
         shutil.copy2(source_path, base_path)
 
     snapshot = BaseSnapshot(
-        path=base_path, sha256=sha256, bytes=num_bytes, url=source_label, etag=etag,
-        downloaded_at=_now_iso(), run_dir=run_dir, dataset=dataset_slug,
+        path=base_path,
+        sha256=sha256,
+        bytes=num_bytes,
+        url=source_label,
+        etag=etag,
+        downloaded_at=_now_iso(),
+        run_dir=run_dir,
+        dataset=dataset_slug,
     )
     meta = snapshot.as_dict()
     (base_dir / "base_snapshot.json").write_text(
         json.dumps(meta, indent=2) + "\n", encoding="utf-8"
     )
-    print(f"BASE SNAPSHOT: dataset={dataset_slug} | sha256={sha256[:12]} | {num_bytes:,} bytes | {source_label}")
+    print(
+        f"BASE SNAPSHOT: dataset={dataset_slug} | sha256={sha256[:12]} | {num_bytes:,} bytes | {source_label}"
+    )
     return snapshot
 
 
-def validate_base_snapshot(path: Path, expected_function_count: Optional[int] = None) -> dict[str, Any]:
+def validate_base_snapshot(
+    path: Path, expected_function_count: int | None = None
+) -> dict[str, Any]:
     """Validate an Optima base.json artifact and write a diagnostics report
     next to it. Raises BaseJsonError on any hard-error condition.
     """
@@ -401,9 +426,19 @@ def validate_base_snapshot(path: Path, expected_function_count: Optional[int] = 
         status_counts[status] = status_counts.get(status, 0) + 1
 
     presence_fields = (
-        "return_type", "parameters", "source_location", "ast", "cfg",
-        "basic_blocks", "calls", "called_by", "dependencies", "llvm",
-        "llvm_ir", "mangled_name", "compiler_error",
+        "return_type",
+        "parameters",
+        "source_location",
+        "ast",
+        "cfg",
+        "basic_blocks",
+        "calls",
+        "called_by",
+        "dependencies",
+        "llvm",
+        "llvm_ir",
+        "mangled_name",
+        "compiler_error",
     )
     presence_counts = {
         field_name: sum(1 for f in functions if f.get(field_name)) for field_name in presence_fields
@@ -425,8 +460,10 @@ def validate_base_snapshot(path: Path, expected_function_count: Optional[int] = 
     (path.parent / "validation_report.json").write_text(
         json.dumps(report, indent=2) + "\n", encoding="utf-8"
     )
-    print(f"base.json validated: {report['files']} files, {report['functions']} functions, "
-          f"analysis_status={status_counts}")
+    print(
+        f"base.json validated: {report['files']} files, {report['functions']} functions, "
+        f"analysis_status={status_counts}"
+    )
     if empty_source_count:
         print(f"  warning: {empty_source_count} functions have no source_code")
     return report
@@ -492,15 +529,19 @@ class RunContext:
         return {}
 
     def save_manifest(self, manifest: dict[str, Any]) -> None:
-        self.manifest_path.write_text(json.dumps(manifest, indent=2, default=str) + "\n", encoding="utf-8")
+        self.manifest_path.write_text(
+            json.dumps(manifest, indent=2, default=str) + "\n", encoding="utf-8"
+        )
 
-    def set_model_status(self, slug: str, status: str, details: Optional[dict[str, Any]] = None) -> None:
+    def set_model_status(
+        self, slug: str, status: str, details: dict[str, Any] | None = None
+    ) -> None:
         manifest = self.load_manifest()
         models = manifest.setdefault("models", {})
         models[slug] = {"status": status, "updated_at": _now_iso(), **(details or {})}
         self.save_manifest(manifest)
 
-    def get_model_status(self, slug: str) -> Optional[str]:
+    def get_model_status(self, slug: str) -> str | None:
         return self.load_manifest().get("models", {}).get(slug, {}).get("status")
 
     @classmethod
@@ -511,15 +552,27 @@ class RunContext:
         config: dict[str, Any],
         env: dict[str, Any],
         optima_commit: str,
-        configured_models: Optional[list[str]] = None,
-    ) -> "RunContext":
+        configured_models: list[str] | None = None,
+    ) -> RunContext:
         ctx = cls(
-            run_dir=base.run_dir, base=base, config=config, env=env,
-            optima_commit=optima_commit, session_id=uuid.uuid4().hex,
+            run_dir=base.run_dir,
+            base=base,
+            config=config,
+            env=env,
+            optima_commit=optima_commit,
+            session_id=uuid.uuid4().hex,
             configured_models=configured_models or [],
         )
-        for sub in (ctx.base_dir, ctx.benchmark_dir, ctx.smoke_dir, ctx.enriched_dir,
-                    ctx.rag_inputs_dir, ctx.rag_dir, ctx.logs_dir, ctx.summaries_dir):
+        for sub in (
+            ctx.base_dir,
+            ctx.benchmark_dir,
+            ctx.smoke_dir,
+            ctx.enriched_dir,
+            ctx.rag_inputs_dir,
+            ctx.rag_dir,
+            ctx.logs_dir,
+            ctx.summaries_dir,
+        ):
             sub.mkdir(parents=True, exist_ok=True)
         manifest = ctx.load_manifest()
         manifest.setdefault("dataset", base.dataset)
@@ -532,14 +585,17 @@ class RunContext:
         manifest["config"] = config
         manifest["env"] = env
         manifest["output_dir"] = str(ctx.run_dir)
-        manifest["configured_models"] = sorted(set(manifest.get("configured_models", [])) | set(ctx.configured_models))
+        manifest["configured_models"] = sorted(
+            set(manifest.get("configured_models", [])) | set(ctx.configured_models)
+        )
         manifest.setdefault("models", {})
         ctx.save_manifest(manifest)
         return ctx
 
 
-def find_resume_dirs(ctx: RunContext, search_root: Path = Path("/kaggle/input"),
-                     max_depth: int = 6) -> list[Path]:
+def find_resume_dirs(
+    ctx: RunContext, search_root: Path = Path("/kaggle/input"), max_depth: int = 6
+) -> list[Path]:
     """Walk ``search_root`` (every attached Kaggle dataset / previous notebook
     output) for ``runs/base-<sha12>`` directories that match this run's base
     snapshot and contain a checkpoint or smoke artifact. Returns the
@@ -556,7 +612,9 @@ def find_resume_dirs(ctx: RunContext, search_root: Path = Path("/kaggle/input"),
             continue
         if target in dirnames and Path(dirpath).name == "runs":
             run_dir = Path(dirpath) / target
-            if any(run_dir.glob("enriched/*.checkpoint.jsonl")) or any(run_dir.glob("smoke/**/*.jsonl")):
+            if any(run_dir.glob("enriched/*.checkpoint.jsonl")) or any(
+                run_dir.glob("smoke/**/*.jsonl")
+            ):
                 found.append(Path(dirpath).parent)
     return found
 
@@ -575,10 +633,14 @@ def restore_resume_state(ctx: RunContext, resume_input_dir: Any) -> None:
     if isinstance(resume_input_dir, str) and resume_input_dir.lower() == "auto":
         sources = find_resume_dirs(ctx)
         if not sources:
-            print("RESUME: auto-search of /kaggle/input found no matching previous run; starting fresh.")
+            print(
+                "RESUME: auto-search of /kaggle/input found no matching previous run; starting fresh."
+            )
             return
-        print(f"RESUME: auto-discovered {len(sources)} previous output dir(s): "
-              f"{[str(p) for p in sources]}")
+        print(
+            f"RESUME: auto-discovered {len(sources)} previous output dir(s): "
+            f"{[str(p) for p in sources]}"
+        )
     elif isinstance(resume_input_dir, (list, tuple, set)):
         sources = [Path(p) for p in resume_input_dir]
     else:
@@ -598,8 +660,12 @@ def restore_resume_state(ctx: RunContext, resume_input_dir: Any) -> None:
         if not source_run_dir.exists():
             print(f"RESUME: no matching run directory for base-{sha12} under {source}; skipped.")
             continue
-        for pattern in ("enriched/*.checkpoint.jsonl", "smoke/**/*.jsonl", "smoke/**/*.json",
-                        "logs/*/attempts.jsonl"):
+        for pattern in (
+            "enriched/*.checkpoint.jsonl",
+            "smoke/**/*.jsonl",
+            "smoke/**/*.json",
+            "logs/*/attempts.jsonl",
+        ):
             for src in source_run_dir.glob(pattern):
                 rel = src.relative_to(source_run_dir)
                 dst = ctx.run_dir / rel
@@ -617,7 +683,7 @@ def freeze_benchmark(
     ctx: RunContext,
     num_queries: int = 20,
     seed: int = 42,
-    benchmark_json_url: Optional[str] = None,
+    benchmark_json_url: str | None = None,
 ) -> dict[str, Any]:
     """Generate (or download) the benchmark exactly once for this base.json
     snapshot, freeze it to disk, and validate it. Never regenerated from a
@@ -670,8 +736,11 @@ def freeze_benchmark(
     functions = flatten_functions(base_data)
     validation = validate_benchmark_queries(queries, functions)
     min_required = max(10, int(0.5 * num_queries))
-    if (validation.get("invalid_function_ids", 0) or validation.get("invalid_schema", 0)
-            or validation.get("empty_relevant_functions", 0)):
+    if (
+        validation.get("invalid_function_ids", 0)
+        or validation.get("invalid_schema", 0)
+        or validation.get("empty_relevant_functions", 0)
+    ):
         raise BenchmarkError(f"Benchmark failed validation: {validation}")
     if len(queries) < min_required:
         raise BenchmarkError(
@@ -726,7 +795,6 @@ def final_report(ctx: RunContext) -> dict[str, Any]:
             failed.append((slug, status))
     if failed:
         raise ExperimentIncompleteError(
-            f"{len(failed)} configured model(s) did not reach 'enrichment_passed': "
-            f"{failed}"
+            f"{len(failed)} configured model(s) did not reach 'enrichment_passed': {failed}"
         )
     return {"total_bytes": total_bytes, "manifest": manifest}

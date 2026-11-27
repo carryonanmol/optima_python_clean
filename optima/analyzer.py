@@ -1,19 +1,20 @@
 """
 Optima analyzer: extracts compiler-derived information from C/C++ projects.
 """
+
 import ctypes.util
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
-import tempfile
 import sys
-import re
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Set
+from typing import Any
+
 import clang.cindex
-from clang.cindex import CursorKind, TypeKind, StorageClass
+from clang.cindex import CursorKind
 
 
 def safe_slug(name: str) -> str:
@@ -27,7 +28,7 @@ def safe_slug(name: str) -> str:
     return slug or "project"
 
 
-def _find_libclang() -> Optional[Path]:
+def _find_libclang() -> Path | None:
     """Locate the native libclang shared library without assuming a version.
 
     Debian/Ubuntu packages install libclang under a version-specific path
@@ -97,19 +98,31 @@ _configure_clang()
 # extracted and resolved as call targets the same way, or Optima silently
 # drops most of the API surface of any object-oriented C++ codebase.
 FUNCTION_LIKE_KINDS = (
-    CursorKind.FUNCTION_DECL, CursorKind.CONSTRUCTOR, CursorKind.DESTRUCTOR,
-    CursorKind.CXX_METHOD, CursorKind.FUNCTION_TEMPLATE, CursorKind.CONVERSION_FUNCTION,
+    CursorKind.FUNCTION_DECL,
+    CursorKind.CONSTRUCTOR,
+    CursorKind.DESTRUCTOR,
+    CursorKind.CXX_METHOD,
+    CursorKind.FUNCTION_TEMPLATE,
+    CursorKind.CONVERSION_FUNCTION,
 )
 CLASS_LIKE_KINDS = (
-    CursorKind.CLASS_DECL, CursorKind.STRUCT_DECL, CursorKind.CLASS_TEMPLATE,
+    CursorKind.CLASS_DECL,
+    CursorKind.STRUCT_DECL,
+    CursorKind.CLASS_TEMPLATE,
 )
-NAME_CONTRIBUTING_KINDS = FUNCTION_LIKE_KINDS + CLASS_LIKE_KINDS + (
-    CursorKind.UNION_DECL, CursorKind.NAMESPACE, CursorKind.TYPEDEF_DECL,
-    CursorKind.ENUM_DECL,
+NAME_CONTRIBUTING_KINDS = (
+    FUNCTION_LIKE_KINDS
+    + CLASS_LIKE_KINDS
+    + (
+        CursorKind.UNION_DECL,
+        CursorKind.NAMESPACE,
+        CursorKind.TYPEDEF_DECL,
+        CursorKind.ENUM_DECL,
+    )
 )
 
 
-def _enclosing_class_cursor(cursor: clang.cindex.Cursor) -> Optional[clang.cindex.Cursor]:
+def _enclosing_class_cursor(cursor: clang.cindex.Cursor) -> clang.cindex.Cursor | None:
     """Walk up to the nearest enclosing class/struct/class-template definition."""
     parent = cursor.semantic_parent
     while parent:
@@ -119,7 +132,7 @@ def _enclosing_class_cursor(cursor: clang.cindex.Cursor) -> Optional[clang.cinde
     return None
 
 
-def _class_id_for_cursor(cursor: clang.cindex.Cursor, project_root: str) -> Optional[str]:
+def _class_id_for_cursor(cursor: clang.cindex.Cursor, project_root: str) -> str | None:
     """Build a class id from a class cursor. Derived purely from the cursor's own
     identity so a method computes the same id as the class's own extraction pass."""
     if cursor.location.file is None:
@@ -138,8 +151,8 @@ class FunctionInfo:
         cursor: clang.cindex.Cursor,
         file_path: str,
         project_root: str,
-        include_dirs: Optional[List[str]] = None,
-        compile_cache: Optional[Dict[str, Dict[str, str]]] = None
+        include_dirs: list[str] | None = None,
+        compile_cache: dict[str, dict[str, str]] | None = None,
     ):
         self.cursor = cursor
         cursor_file = cursor.location.file.name if cursor.location.file else file_path
@@ -159,7 +172,8 @@ class FunctionInfo:
         enclosing_class = _enclosing_class_cursor(cursor)
         self.class_id = (
             _class_id_for_cursor(enclosing_class, self.project_root)
-            if enclosing_class is not None else None
+            if enclosing_class is not None
+            else None
         )
         self.class_info = {
             "class_id": self.class_id,
@@ -174,8 +188,7 @@ class FunctionInfo:
             "is_conversion_operator": cursor.kind == CursorKind.CONVERSION_FUNCTION,
             "is_operator_overload": self.name.startswith("operator") and self.name != "operator",
             "access_specifier": (
-                cursor.access_specifier.name
-                if enclosing_class is not None else None
+                cursor.access_specifier.name if enclosing_class is not None else None
             ),
         }
         self.analysis_status = "pending"
@@ -209,16 +222,13 @@ class FunctionInfo:
     def _get_return_type(self) -> str:
         return self.cursor.result_type.spelling
 
-    def _get_parameters(self) -> List[Dict[str, str]]:
+    def _get_parameters(self) -> list[dict[str, str]]:
         params = []
         for arg in self.cursor.get_arguments():
-            params.append({
-                "name": arg.spelling,
-                "type": arg.type.spelling
-            })
+            params.append({"name": arg.spelling, "type": arg.type.spelling})
         return params
 
-    def _get_source_location(self) -> Dict[str, Any]:
+    def _get_source_location(self) -> dict[str, Any]:
         start = self.cursor.location
         end = self.cursor.extent.end
         return {
@@ -226,17 +236,17 @@ class FunctionInfo:
             "start_line": start.line,
             "start_column": start.column,
             "end_line": end.line,
-            "end_column": end.column
+            "end_column": end.column,
         }
 
     def _get_source_code(self) -> str:
         if not self.cursor.location.file:
             return ""
-        with open(self.cursor.location.file.name, 'r', encoding='utf-8', errors='replace') as f:
+        with open(self.cursor.location.file.name, encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
         start_line = self.cursor.location.line - 1  # 0-indexed
         end_line = self.cursor.extent.end.line - 1
-        return ''.join(lines[start_line:end_line+1])
+        return "".join(lines[start_line : end_line + 1])
 
     def enrich_with_llvm(self, llvm_ir: str, status: str = "compiled", error: str = ""):
         self.llvm_ir = llvm_ir
@@ -247,11 +257,11 @@ class FunctionInfo:
             return
         self._build_cfg()
 
-    def _get_ast(self) -> Dict[str, Any]:
+    def _get_ast(self) -> dict[str, Any]:
         # Return a simplified AST representation for the function
         return self._cursor_to_dict(self.cursor)
 
-    def _cursor_to_dict(self, cursor: clang.cindex.Cursor) -> Dict[str, Any]:
+    def _cursor_to_dict(self, cursor: clang.cindex.Cursor) -> dict[str, Any]:
         """Convert a cursor and its children to a simple dict representation."""
         node = {
             "kind": cursor.kind.name,
@@ -260,15 +270,17 @@ class FunctionInfo:
             "location": {
                 "file": cursor.location.file.name if cursor.location.file else None,
                 "line": cursor.location.line,
-                "column": cursor.location.column
-            } if cursor.location.file else None,
-            "children": []
+                "column": cursor.location.column,
+            }
+            if cursor.location.file
+            else None,
+            "children": [],
         }
         for child in cursor.get_children():
             node["children"].append(self._cursor_to_dict(child))
         return node
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "name": self.name,
@@ -294,21 +306,29 @@ class FunctionInfo:
                 "status": self.llvm_status,
                 **({"function_name": self.llvm_function_name} if self.llvm_function_name else {}),
                 **({"mangled_name": self.mangled_name} if self.mangled_name else {}),
-                **({"basic_blocks": self.basic_blocks, "cfg": self.cfg}
-                   if self.analysis_status == "success" else {}),
-                **({"reason": "not_emitted_or_not_found"}
-                   if self.llvm_status == "compiled" and self.analysis_status != "success"
-                   else {}),
-                **({"error": self.compiler_error} if self.llvm_status == "compilation_failed" else {}),
+                **(
+                    {"basic_blocks": self.basic_blocks, "cfg": self.cfg}
+                    if self.analysis_status == "success"
+                    else {}
+                ),
+                **(
+                    {"reason": "not_emitted_or_not_found"}
+                    if self.llvm_status == "compiled" and self.analysis_status != "success"
+                    else {}
+                ),
+                **(
+                    {"error": self.compiler_error}
+                    if self.llvm_status == "compilation_failed"
+                    else {}
+                ),
             },
             "ast": self.ast,
             "basic_blocks": self.basic_blocks,
             "cfg": self.cfg,
             "calls": self.calls,
             "called_by": self.called_by,
-            "dependencies": self.dependencies
+            "dependencies": self.dependencies,
         }
-
 
     def _build_cfg(self):
         """Build control-flow graph from LLVM IR.
@@ -351,7 +371,7 @@ class FunctionInfo:
 
         # Narrow self.llvm_ir to just this function (signature + body) now
         # that it has been located, instead of leaving the whole file on it.
-        self.llvm_ir = llvm_ir[match.start():match.end()] + func_body + "\n}"
+        self.llvm_ir = llvm_ir[match.start() : match.end()] + func_body + "\n}"
 
         blocks = self._parse_llvm_blocks(func_body)
         if not blocks:
@@ -397,7 +417,7 @@ class FunctionInfo:
             "entry_node": entry_node,
             "exit_node": exit_node,
             "nodes": [block["id"] for block in blocks],
-            "edges": edges
+            "edges": edges,
         }
         self.analysis_status = "success"
 
@@ -409,7 +429,7 @@ class FunctionInfo:
             r"^\s*define\b[^{\n]*@"
             r"(?:(?P<quoted>\"[^\"]+\")|(?P<plain>[^\s(]+))"
             r"[^{\n]*\{",
-            re.MULTILINE
+            re.MULTILINE,
         )
         for match in definition_pattern.finditer(llvm_ir):
             llvm_name = match.group("quoted") or match.group("plain")
@@ -419,24 +439,22 @@ class FunctionInfo:
         return None
 
     @staticmethod
-    def _extract_llvm_function_body(llvm_ir: str, body_start: int) -> Optional[str]:
+    def _extract_llvm_function_body(llvm_ir: str, body_start: int) -> str | None:
         """Extract a function body using LLVM's closing-brace line."""
         body_end = re.search(r"(?m)^\s*}\s*$", llvm_ir[body_start:])
         if body_end is None:
             return None
-        return llvm_ir[body_start:body_start + body_end.start()]
+        return llvm_ir[body_start : body_start + body_end.start()]
 
     @staticmethod
-    def _parse_llvm_blocks(func_body: str) -> List[Dict[str, Any]]:
+    def _parse_llvm_blocks(func_body: str) -> list[dict[str, Any]]:
         blocks = []
         current = {"id": "entry", "name": "entry", "instructions": []}
         for line in func_body.splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith(";"):
                 continue
-            label_match = re.fullmatch(
-                r"(?P<label>[-A-Za-z0-9$._]+):(?:\s*;.*)?", stripped
-            )
+            label_match = re.fullmatch(r"(?P<label>[-A-Za-z0-9$._]+):(?:\s*;.*)?", stripped)
             if label_match:
                 if not blocks and current["id"] == "entry" and not current["instructions"]:
                     label = label_match.group("label")
@@ -453,29 +471,27 @@ class FunctionInfo:
         return blocks
 
     @staticmethod
-    def _get_terminator(instructions: List[str]) -> Optional[str]:
+    def _get_terminator(instructions: list[str]) -> str | None:
         for instruction in reversed(instructions):
             if re.match(r"^(br|switch|ret|invoke|unreachable)\b", instruction):
                 return instruction
         return None
 
     @staticmethod
-    def _get_terminator_targets(terminator: str) -> List[str]:
+    def _get_terminator_targets(terminator: str) -> list[str]:
         if terminator.startswith("ret ") or terminator.startswith("unreachable"):
             return []
         return re.findall(r"label\s+%?([^,\s\]]+)", terminator)
 
     @staticmethod
-    def _extract_debug_lines(llvm_ir: str) -> Dict[str, int]:
+    def _extract_debug_lines(llvm_ir: str) -> dict[str, int]:
         return {
             metadata_id: int(line)
-            for metadata_id, line in re.findall(
-                r"!(\d+)\s*=\s*!DILocation\(line:\s*(\d+)", llvm_ir
-            )
+            for metadata_id, line in re.findall(r"!(\d+)\s*=\s*!DILocation\(line:\s*(\d+)", llvm_ir)
         }
 
 
-def _discover_include_dirs(project_path: Path, exclude_dirs: Optional[Set[str]] = None) -> List[str]:
+def _discover_include_dirs(project_path: Path, exclude_dirs: set[str] | None = None) -> list[str]:
     """Discover absolute project directories that may contain included headers.
 
     Only the project root and directories literally named 'include'/'src' are
@@ -497,7 +513,7 @@ def _discover_include_dirs(project_path: Path, exclude_dirs: Optional[Set[str]] 
     for root, dirs, files in os.walk(project_path):
         dirs[:] = [d for d in dirs if d.lower() not in exclude_dirs]
         root_path = Path(root).resolve()
-        if root_path.name.lower() in {'include', 'src'}:
+        if root_path.name.lower() in {"include", "src"}:
             include_dirs.add(str(root_path))
 
     return sorted(include_dirs)
@@ -516,11 +532,11 @@ def _is_project_owned(cursor: clang.cindex.Cursor, project_root: str) -> bool:
         return False
 
 
-_COMPILER_PATH_CACHE: Dict[str, Optional[str]] = {}
-_RESOURCE_DIR_CACHE: Dict[str, Optional[str]] = {}
+_COMPILER_PATH_CACHE: dict[str, str | None] = {}
+_RESOURCE_DIR_CACHE: dict[str, str | None] = {}
 
 
-def _find_clang_compiler(name: str) -> Optional[str]:
+def _find_clang_compiler(name: str) -> str | None:
     """Locate a clang/clang++ executable without assuming an exact version.
 
     Prefers an unversioned entry on PATH (e.g. /usr/bin/clang++), and falls
@@ -532,6 +548,7 @@ def _find_clang_compiler(name: str) -> Optional[str]:
         return _COMPILER_PATH_CACHE[name]
     resolved = shutil.which(name)
     if resolved is None:
+
         def _version_key(p: str) -> int:
             match = re.search(r"llvm-(\d+)", p) or re.search(r"-(\d+)$", p)
             return int(match.group(1)) if match else -1
@@ -545,7 +562,7 @@ def _find_clang_compiler(name: str) -> Optional[str]:
     return resolved
 
 
-def _clang_resource_dir(compiler: str) -> Optional[str]:
+def _clang_resource_dir(compiler: str) -> str | None:
     """Ask the compiler itself for its resource directory, which is where its
     builtin headers (stddef.h, stdarg.h, stdbool.h, ...) live.
 
@@ -572,7 +589,9 @@ def _clang_resource_dir(compiler: str) -> Optional[str]:
             # but some distributions (observed on Kaggle's LLVM install) put them
             # directly under <resource-dir>/. Accept either layout rather than
             # assuming one.
-            if (candidate_path / "include" / "stddef.h").exists() or (candidate_path / "stddef.h").exists():
+            if (candidate_path / "include" / "stddef.h").exists() or (
+                candidate_path / "stddef.h"
+            ).exists():
                 resource_dir = candidate
     except (OSError, subprocess.TimeoutExpired):
         pass
@@ -581,38 +600,41 @@ def _clang_resource_dir(compiler: str) -> Optional[str]:
 
 
 def _compile_translation_unit(
-    file_path: Path,
-    include_dirs: List[str],
-    compile_cache: Dict[str, Dict[str, str]]
-) -> Dict[str, str]:
+    file_path: Path, include_dirs: list[str], compile_cache: dict[str, dict[str, str]]
+) -> dict[str, str]:
     path = str(file_path.resolve())
     if path in compile_cache:
         return compile_cache[path]
-    is_cxx = file_path.suffix.lower() in {'.cpp', '.cc', '.cxx', '.hpp', '.hh', '.hxx'}
-    compiler_name = 'clang++' if is_cxx else 'clang'
+    is_cxx = file_path.suffix.lower() in {".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"}
+    compiler_name = "clang++" if is_cxx else "clang"
     compiler = _find_clang_compiler(compiler_name)
     if compiler is None:
         compiled = {
-            "ir": "", "status": "compilation_failed",
+            "ir": "",
+            "status": "compilation_failed",
             "error": f"No '{compiler_name}' executable was found (checked PATH and "
-                     f"/usr/bin/{compiler_name}-*).",
+            f"/usr/bin/{compiler_name}-*).",
         }
         compile_cache[path] = compiled
         return compiled
-    standard = '-std=c++17' if is_cxx else '-std=c11'
-    cmd = [compiler, '-S', '-emit-llvm', '-O0', '-g', standard]
+    standard = "-std=c++17" if is_cxx else "-std=c11"
+    cmd = [compiler, "-S", "-emit-llvm", "-O0", "-g", standard]
     resource_dir = _clang_resource_dir(compiler)
     if resource_dir:
-        cmd.extend(['-resource-dir', resource_dir])
+        cmd.extend(["-resource-dir", resource_dir])
     for include_dir in include_dirs:
-        cmd.extend(['-I', include_dir])
-    cmd.extend([path, '-o', '-'])
+        cmd.extend(["-I", include_dir])
+    cmd.extend([path, "-o", "-"])
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except subprocess.TimeoutExpired:
         result = None
     if result is None:
-        compiled = {"ir": "", "status": "compilation_failed", "error": "Compiler timed out after 30 seconds."}
+        compiled = {
+            "ir": "",
+            "status": "compilation_failed",
+            "error": "Compiler timed out after 30 seconds.",
+        }
     elif result.returncode != 0:
         compiled = {"ir": "", "status": "compilation_failed", "error": result.stderr.strip()}
     else:
@@ -624,11 +646,11 @@ def _compile_translation_unit(
 def _finalize_and_write(
     output_file: Path,
     project_path: Path,
-    processed_files: List[Path],
-    all_functions: List["FunctionInfo"],
-    function_map: Dict[str, "FunctionInfo"],
-    functions_by_file: Dict[str, List["FunctionInfo"]],
-    class_cursor_map: Dict[str, clang.cindex.Cursor],
+    processed_files: list[Path],
+    all_functions: list["FunctionInfo"],
+    function_map: dict[str, "FunctionInfo"],
+    functions_by_file: dict[str, list["FunctionInfo"]],
+    class_cursor_map: dict[str, clang.cindex.Cursor],
 ) -> None:
     """Resolve calls/called_by/classes from whatever has been parsed so far
     and atomically (re)write base.json.
@@ -649,22 +671,26 @@ def _finalize_and_write(
         func.calls = _extract_calls(func.cursor, function_map, str(project_path))
         func.dependencies = _extract_dependencies(func.cursor, project_path)
 
-    called_by_map: Dict[str, List[Dict[str, Any]]] = {}
+    called_by_map: dict[str, list[dict[str, Any]]] = {}
     for func in all_functions:
         for call in func.calls:
             if call.get("resolved") and call.get("id"):
-                called_by_map.setdefault(call["id"], []).append({
-                    "id": func.id, "name": func.name, "qualified_name": func.qualified_name,
-                })
+                called_by_map.setdefault(call["id"], []).append(
+                    {
+                        "id": func.id,
+                        "name": func.name,
+                        "qualified_name": func.qualified_name,
+                    }
+                )
     for func in all_functions:
         func.called_by = called_by_map.get(func.id, [])
 
-    method_ids_by_class: Dict[str, List[str]] = {}
+    method_ids_by_class: dict[str, list[str]] = {}
     for func in all_functions:
         if func.class_id:
             method_ids_by_class.setdefault(func.class_id, []).append(func.id)
 
-    classes_by_file: Dict[str, List[Dict[str, Any]]] = {}
+    classes_by_file: dict[str, list[dict[str, Any]]] = {}
     for class_id, class_cursor in class_cursor_map.items():
         class_dict = _class_cursor_to_dict(
             class_cursor, class_id, str(project_path), method_ids_by_class.get(class_id, [])
@@ -679,7 +705,9 @@ def _finalize_and_write(
             "path": relative_path,
             "name": file_path.name,
             "relative_path": relative_path,
-            "language": "cpp" if file_path.suffix.lower() in {'.cpp', '.cc', '.cxx', '.hpp', '.hh', '.hxx'} else "c",
+            "language": "cpp"
+            if file_path.suffix.lower() in {".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"}
+            else "c",
             "functions": [f.to_dict() for f in functions_by_file.get(relative_path, [])],
             "classes": classes_by_file.get(relative_path, []),
         }
@@ -688,7 +716,9 @@ def _finalize_and_write(
     call_graph_nodes = []
     call_graph_edges = []
     for func in all_functions:
-        call_graph_nodes.append({"id": func.id, "name": func.name, "qualified_name": func.qualified_name})
+        call_graph_nodes.append(
+            {"id": func.id, "name": func.name, "qualified_name": func.qualified_name}
+        )
         for call in func.calls:
             if call.get("resolved"):
                 call_graph_edges.append({"from": func.id, "to": call["id"]})
@@ -704,7 +734,7 @@ def _finalize_and_write(
             # than an absolute path, which is not a safe/portable identifier.
             "test_suite": safe_slug(project_path.name),
             "root": str(project_path),
-            "language": "cpp"
+            "language": "cpp",
         },
         "files": all_files,
         "graph": {
@@ -722,11 +752,11 @@ def _finalize_and_write(
             ],
             "call_edges": call_graph_edges,
         },
-        "call_graph": call_graph
+        "call_graph": call_graph,
     }
 
     tmp_path = output_file.with_suffix(output_file.suffix + ".tmp")
-    with open(tmp_path, 'w') as f:
+    with open(tmp_path, "w") as f:
         json.dump(base_json, f, indent=2)
     os.replace(tmp_path, output_file)
 
@@ -735,7 +765,7 @@ def analyze_project(
     project_path: Path,
     output_dir: Path,
     verbose: bool = False,
-    exclude_dirs: Optional[List[str]] = None,
+    exclude_dirs: list[str] | None = None,
     checkpoint_every: int = 20,
 ) -> Path:
     """Analyze a C/C++ project and generate base.json.
@@ -760,21 +790,21 @@ def analyze_project(
 
     index = clang.cindex.Index.create()
     include_dirs = _discover_include_dirs(project_path, exclude_names)
-    compile_cache: Dict[str, Dict[str, str]] = {}
-    clang_args = ['-std=c++17']
+    compile_cache: dict[str, dict[str, str]] = {}
+    clang_args = ["-std=c++17"]
     # libclang's own header search can disagree with the system's default one
     # (the same "fatal error: 'stddef.h' file not found" problem as the LLVM
     # compile step below, but here it aborts index.parse() entirely and loses
     # every function in the file rather than just the LLVM mapping for one —
     # so pin it to a real resource directory whenever one can be detected.
-    _parse_resource_dir = _clang_resource_dir(_find_clang_compiler('clang++') or 'clang++')
+    _parse_resource_dir = _clang_resource_dir(_find_clang_compiler("clang++") or "clang++")
     if _parse_resource_dir:
-        clang_args.extend(['-resource-dir', _parse_resource_dir])
+        clang_args.extend(["-resource-dir", _parse_resource_dir])
     for include_dir in include_dirs:
-        clang_args.extend(['-I', include_dir])
+        clang_args.extend(["-I", include_dir])
 
     # Find all relevant files
-    extensions = {'.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hh', '.hxx'}
+    extensions = {".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", ".hxx"}
     source_files = []
     for root, dirs, files in os.walk(project_path):
         dirs[:] = [d for d in dirs if d.lower() not in exclude_names]
@@ -785,10 +815,10 @@ def analyze_project(
     # We'll store all functions and files
     all_functions = []  # Flat list of all functions for call graph
     function_map = {}  # Map from function ID to FunctionInfo
-    functions_by_file: Dict[str, List[FunctionInfo]] = {}
-    class_cursor_map: Dict[str, clang.cindex.Cursor] = {}  # class id -> defining cursor
+    functions_by_file: dict[str, list[FunctionInfo]] = {}
+    class_cursor_map: dict[str, clang.cindex.Cursor] = {}  # class id -> defining cursor
     excluded_system_functions = set()
-    processed_files: List[Path] = []
+    processed_files: list[Path] = []
 
     output_file = output_dir / "base.json"
     total_files = len(source_files)
@@ -815,8 +845,8 @@ def analyze_project(
             # mapping. This previously only special-cased .c, silently
             # dropping every function defined in a .h file (e.g. static
             # inline helpers) across the whole project.
-            if file_path.suffix.lower() not in {'.cpp', '.cc', '.cxx', '.hpp', '.hh', '.hxx'}:
-                parse_args[0] = '-std=c11'
+            if file_path.suffix.lower() not in {".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"}:
+                parse_args[0] = "-std=c11"
             tu = index.parse(str(file_path), args=parse_args)
 
             if tu.diagnostics:
@@ -830,7 +860,9 @@ def analyze_project(
             # Collect functions from this translation unit
             file_functions = []
 
-            def visit_cursor(cursor: clang.cindex.Cursor, parent: Optional[clang.cindex.Cursor] = None):
+            def visit_cursor(
+                cursor: clang.cindex.Cursor, parent: clang.cindex.Cursor | None = None
+            ):
                 if cursor.kind in CLASS_LIKE_KINDS and cursor.is_definition():
                     if _is_project_owned(cursor, str(project_path)):
                         class_id = _class_id_for_cursor(cursor, str(project_path))
@@ -841,19 +873,24 @@ def analyze_project(
                     if cursor.is_definition():
                         if _is_project_owned(cursor, str(project_path)):
                             func_info = FunctionInfo(
-                                cursor, str(file_path), str(project_path),
-                                include_dirs, compile_cache
+                                cursor,
+                                str(file_path),
+                                str(project_path),
+                                include_dirs,
+                                compile_cache,
                             )
                             if func_info.id not in function_map:
                                 file_functions.append(func_info)
                                 all_functions.append(func_info)
                                 function_map[func_info.id] = func_info
                         elif cursor.location.file:
-                            excluded_system_functions.add((
-                                os.path.abspath(os.path.realpath(cursor.location.file.name)),
-                                cursor.location.line,
-                                cursor.spelling
-                            ))
+                            excluded_system_functions.add(
+                                (
+                                    os.path.abspath(os.path.realpath(cursor.location.file.name)),
+                                    cursor.location.line,
+                                    cursor.spelling,
+                                )
+                            )
                 # Recurse
                 for child in cursor.get_children():
                     visit_cursor(child, cursor)
@@ -881,19 +918,29 @@ def analyze_project(
             index_in_source % checkpoint_every == 0 or index_in_source == total_files
         ):
             _finalize_and_write(
-                output_file, project_path, processed_files,
-                all_functions, function_map, functions_by_file, class_cursor_map,
+                output_file,
+                project_path,
+                processed_files,
+                all_functions,
+                function_map,
+                functions_by_file,
+                class_cursor_map,
             )
 
     # Always finish with one last checkpoint so the file on disk reflects
     # the complete, fully call-resolved result even if checkpoint_every
     # didn't line up with total_files (or checkpointing was disabled).
     _finalize_and_write(
-        output_file, project_path, processed_files,
-        all_functions, function_map, functions_by_file, class_cursor_map,
+        output_file,
+        project_path,
+        processed_files,
+        all_functions,
+        function_map,
+        functions_by_file,
+        class_cursor_map,
     )
 
-    successful_compilations = sum(result["status"] == "compiled" for result in compile_cache.values())
+    sum(result["status"] == "compiled" for result in compile_cache.values())
     failed_compilations = sum(
         result["status"] == "compilation_failed" for result in compile_cache.values()
     )
@@ -915,16 +962,24 @@ def analyze_project(
         sys.stdout.write("\n")
     print(f"Source files discovered: {len(source_files)}")
     if not verbose:
-        print(f"Files with parse errors: {files_with_errors} (pass verbose=True / --verbose for details)")
+        print(
+            f"Files with parse errors: {files_with_errors} (pass verbose=True / --verbose for details)"
+        )
     print(f"Classes/structs discovered: {len(class_cursor_map)}")
     print(f"Project functions: {len(all_functions)}")
-    print(f"  of which methods: {methods} (constructors: {constructors}, destructors: {destructors}, "
-          f"static: {statics}, virtual: {virtuals}, operator overloads: {operators})")
+    print(
+        f"  of which methods: {methods} (constructors: {constructors}, destructors: {destructors}, "
+        f"static: {statics}, virtual: {virtuals}, operator overloads: {operators})"
+    )
     print(f"  of which function templates: {templates}")
     print(f"System functions excluded: {len(excluded_system_functions)}")
     print(f"LLVM functions matched: {matched_functions}")
-    print(f"Functions with source ranges: {sum(bool(func.source_location['start_line'] and func.source_location['end_line']) for func in all_functions)}")
-    print(f"Project headers analyzed: {sum(f.suffix.lower() in {'.h', '.hpp', '.hh', '.hxx'} for f in processed_files)}")
+    print(
+        f"Functions with source ranges: {sum(bool(func.source_location['start_line'] and func.source_location['end_line']) for func in all_functions)}"
+    )
+    print(
+        f"Project headers analyzed: {sum(f.suffix.lower() in {'.h', '.hpp', '.hh', '.hxx'} for f in processed_files)}"
+    )
     print(f"Functions with CFG: {matched_functions}")
     print(f"Basic blocks: {basic_blocks}")
     print(f"CFG edges: {cfg_edges}")
@@ -937,11 +992,11 @@ def analyze_project(
 
 def _extract_calls(
     cursor: clang.cindex.Cursor,
-    function_map: Dict[str, FunctionInfo],
+    function_map: dict[str, FunctionInfo],
     project_path: str,
-    include_dirs: Optional[List[str]] = None,
-    compile_cache: Optional[Dict[str, Dict[str, str]]] = None
-) -> List[Dict[str, Any]]:
+    include_dirs: list[str] | None = None,
+    compile_cache: dict[str, dict[str, str]] | None = None,
+) -> list[dict[str, Any]]:
     """Extract function calls from the given cursor."""
     calls = []
     for child in cursor.get_children():
@@ -954,15 +1009,18 @@ def _extract_calls(
                         continue
                     called_file = os.path.relpath(
                         os.path.abspath(os.path.realpath(called_ref.location.file.name)),
-                        os.path.abspath(os.path.realpath(project_path))
+                        os.path.abspath(os.path.realpath(project_path)),
                     )
                     called_qualified = _qualified_cursor_name(called_ref)
                     called_id_prefix = f"{called_file}::{called_qualified}::"
                     target = next(
-                        (func for func_id, func in function_map.items()
-                         if func_id.startswith(called_id_prefix)
-                         and func.source_location["start_line"] == called_ref.location.line),
-                        None
+                        (
+                            func
+                            for func_id, func in function_map.items()
+                            if func_id.startswith(called_id_prefix)
+                            and func.source_location["start_line"] == called_ref.location.line
+                        ),
+                        None,
                     )
                     call = {
                         "name": called_ref.spelling,
@@ -975,9 +1033,7 @@ def _extract_calls(
                             call["llvm_name"] = target.mangled_name
                     calls.append(call)
         # Recurse
-        calls.extend(_extract_calls(
-            child, function_map, project_path, include_dirs, compile_cache
-        ))
+        calls.extend(_extract_calls(child, function_map, project_path, include_dirs, compile_cache))
     return calls
 
 
@@ -991,15 +1047,16 @@ def _qualified_cursor_name(cursor: clang.cindex.Cursor) -> str:
 
 
 def _class_cursor_to_dict(
-    cursor: clang.cindex.Cursor, class_id: str, project_root: str, method_ids: List[str]
-) -> Dict[str, Any]:
+    cursor: clang.cindex.Cursor, class_id: str, project_root: str, method_ids: list[str]
+) -> dict[str, Any]:
     """Build the base.json representation of one extracted class/struct."""
     relative_path = os.path.relpath(
         os.path.abspath(os.path.realpath(cursor.location.file.name)),
         os.path.abspath(os.path.realpath(project_root)),
     )
     base_classes = [
-        child.type.spelling for child in cursor.get_children()
+        child.type.spelling
+        for child in cursor.get_children()
         if child.kind == CursorKind.CXX_BASE_SPECIFIER
     ]
     return {
@@ -1018,7 +1075,7 @@ def _class_cursor_to_dict(
     }
 
 
-def _extract_dependencies(cursor: clang.cindex.Cursor, project_path: Path) -> List[str]:
+def _extract_dependencies(cursor: clang.cindex.Cursor, project_path: Path) -> list[str]:
     """Extract dependencies (simplified)."""
     deps = []
     # We'll just look for references to other functions, classes, etc.
@@ -1029,6 +1086,7 @@ def _extract_dependencies(cursor: clang.cindex.Cursor, project_path: Path) -> Li
 if __name__ == "__main__":
     # For testing
     import sys
+
     if len(sys.argv) != 2:
         print("Usage: python analyzer.py <project_path>")
         sys.exit(1)

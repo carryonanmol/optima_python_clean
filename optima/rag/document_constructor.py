@@ -5,8 +5,9 @@ Handles conversion of raw and enriched JSON files to LangChain Documents.
 
 import json
 import logging
-from typing import List, Dict, Any, Optional
 from pathlib import Path
+from typing import Any
+
 from langchain_core.documents import Document
 
 logger = logging.getLogger(__name__)
@@ -48,11 +49,14 @@ class OptimaDocumentConstructor:
         self.representation_mode = representation_mode
         self.valid_modes = ["raw", "enriched", "semantic", "compiler", "hybrid"]
         if representation_mode not in self.valid_modes:
-            raise ValueError(f"Invalid representation mode: {representation_mode}. "
-                           f"Must be one of {self.valid_modes}")
+            raise ValueError(
+                f"Invalid representation mode: {representation_mode}. "
+                f"Must be one of {self.valid_modes}"
+            )
 
-    def construct_documents_from_json(self, json_path: Path,
-                                    enrichment_model: Optional[str] = None) -> List[Document]:
+    def construct_documents_from_json(
+        self, json_path: Path, enrichment_model: str | None = None
+    ) -> list[Document]:
         """
         Construct documents from a JSON file.
 
@@ -64,7 +68,7 @@ class OptimaDocumentConstructor:
             List of LangChain Documents
         """
         logger.info(f"Loading JSON from {json_path}")
-        with open(json_path, 'r') as f:
+        with open(json_path) as f:
             data = json.load(f)
 
         documents = []
@@ -84,8 +88,14 @@ class OptimaDocumentConstructor:
             # Process each function in the file
             for func_data in file_data.get("functions", []):
                 doc = self._construct_function_document(
-                    func_data, file_path, file_name, relative_path,
-                    project_name, project_root, language, enrichment_model
+                    func_data,
+                    file_path,
+                    file_name,
+                    relative_path,
+                    project_name,
+                    project_root,
+                    language,
+                    enrichment_model,
                 )
                 if doc:
                     documents.append(doc)
@@ -93,11 +103,17 @@ class OptimaDocumentConstructor:
         logger.info(f"Constructed {len(documents)} documents from {json_path}")
         return documents
 
-    def _construct_function_document(self, func_data: Dict[str, Any],
-                                   file_path: str, file_name: str,
-                                   relative_path: str, project_name: str,
-                                   project_root: str, language: str,
-                                   enrichment_model: Optional[str]) -> Optional[Document]:
+    def _construct_function_document(
+        self,
+        func_data: dict[str, Any],
+        file_path: str,
+        file_name: str,
+        relative_path: str,
+        project_name: str,
+        project_root: str,
+        language: str,
+        enrichment_model: str | None,
+    ) -> Document | None:
         """
         Construct a single document from function data.
 
@@ -264,7 +280,9 @@ class OptimaDocumentConstructor:
                         if time_complexity:
                             content_parts.append(f"Time Complexity: {_stringify(time_complexity)}")
                         if space_complexity:
-                            content_parts.append(f"Space Complexity: {_stringify(space_complexity)}")
+                            content_parts.append(
+                                f"Space Complexity: {_stringify(space_complexity)}"
+                            )
                     else:
                         content_parts.append(f"Complexity: {_stringify(complexity)}")
 
@@ -304,7 +322,9 @@ class OptimaDocumentConstructor:
                         if time_complexity:
                             semantic_parts.append(f"Time Complexity: {_stringify(time_complexity)}")
                         if space_complexity:
-                            semantic_parts.append(f"Space Complexity: {_stringify(space_complexity)}")
+                            semantic_parts.append(
+                                f"Space Complexity: {_stringify(space_complexity)}"
+                            )
                     else:
                         semantic_parts.append(f"Complexity: {_stringify(complexity)}")
 
@@ -333,7 +353,7 @@ class OptimaDocumentConstructor:
                 "source_location": source_location,
                 "corpus_type": "enriched" if enrichment_model else "raw",
                 "enrichment_model": enrichment_model if enrichment_model else "none",
-                "representation_mode": self.representation_mode
+                "representation_mode": self.representation_mode,
             }
 
             # Add complexity and category info if available
@@ -341,18 +361,19 @@ class OptimaDocumentConstructor:
             metadata["function_type"] = self._determine_function_type(func_data)
             metadata["graph_complexity"] = self._determine_graph_complexity(func_data)
             _dependencies = func_data.get("dependencies")
-            metadata["dependency_count"] = len(_dependencies) if isinstance(_dependencies, (list, dict, str)) else 0
+            metadata["dependency_count"] = (
+                len(_dependencies) if isinstance(_dependencies, (list, dict, str)) else 0
+            )
 
             # Create document
-            document = Document(
-                page_content=page_content,
-                metadata=metadata
-            )
+            document = Document(page_content=page_content, metadata=metadata)
 
             return document
 
         except Exception as e:
-            logger.error(f"Error constructing document for function {func_data.get('id', 'unknown')}: {e}")
+            logger.error(
+                f"Error constructing document for function {func_data.get('id', 'unknown')}: {e}"
+            )
             # Never drop a base function from the corpus over an
             # unexpected enrichment-field shape: fall back to a minimal,
             # base-only document (identity + source) rather than returning
@@ -362,11 +383,17 @@ class OptimaDocumentConstructor:
             fallback_id = func_data.get("id", "")
             if not fallback_id:
                 return None
-            fallback_content = "\n\n".join(part for part in [
-                f"Function: {func_data.get('name', '')}",
-                f"Qualified Name: {func_data.get('qualified_name', '')}",
-                f"Source Code:\n{func_data.get('source_code')}" if func_data.get("source_code") else "",
-            ] if part)
+            fallback_content = "\n\n".join(
+                part
+                for part in [
+                    f"Function: {func_data.get('name', '')}",
+                    f"Qualified Name: {func_data.get('qualified_name', '')}",
+                    f"Source Code:\n{func_data.get('source_code')}"
+                    if func_data.get("source_code")
+                    else "",
+                ]
+                if part
+            )
             return Document(
                 page_content=fallback_content or f"Function: {func_data.get('name', '')}",
                 metadata={
@@ -386,7 +413,7 @@ class OptimaDocumentConstructor:
                 },
             )
 
-    def _determine_complexity_category(self, func_data: Dict[str, Any]) -> str:
+    def _determine_complexity_category(self, func_data: dict[str, Any]) -> str:
         """Determine complexity category based on available metrics."""
         # Try to get from existing complexity metrics
         complexity = func_data.get("complexity", {})
@@ -399,7 +426,7 @@ class OptimaDocumentConstructor:
         param_count = len(func_data.get("parameters", []))
         dependency_count = len(func_data.get("dependencies", []))
         source_code = func_data.get("source_code", "")
-        lines = len(source_code.split('\n')) if source_code else 0
+        lines = len(source_code.split("\n")) if source_code else 0
 
         # Simple scoring
         score = param_count + (dependency_count * 2) + (lines // 10)
@@ -411,11 +438,11 @@ class OptimaDocumentConstructor:
         else:
             return "Complex"
 
-    def _determine_function_type(self, func_data: Dict[str, Any]) -> str:
+    def _determine_function_type(self, func_data: dict[str, Any]) -> str:
         """Determine function type from qualified name or other indicators."""
         qualified_name = func_data.get("qualified_name", "")
         func_name = func_data.get("name", "")
-        return_type = func_data.get("return_type", "")
+        func_data.get("return_type", "")
 
         # Check for common patterns
         if "::" in qualified_name:
@@ -423,7 +450,9 @@ class OptimaDocumentConstructor:
                 return "Test"
             elif "Constructor" in qualified_name or func_name == qualified_name.split("::")[-1]:
                 # Simple heuristic: if function name matches class name, likely constructor
-                class_name = qualified_name.split("::")[-2] if len(qualified_name.split("::")) >= 2 else ""
+                class_name = (
+                    qualified_name.split("::")[-2] if len(qualified_name.split("::")) >= 2 else ""
+                )
                 if class_name and func_name == class_name:
                     return "Constructor"
             elif "Destructor" in qualified_name or "~" in func_name:
@@ -439,7 +468,7 @@ class OptimaDocumentConstructor:
             else:
                 return "Function"
 
-    def _determine_graph_complexity(self, func_data: Dict[str, Any]) -> str:
+    def _determine_graph_complexity(self, func_data: dict[str, Any]) -> str:
         """Determine graph complexity based on call graph."""
         call_graph = func_data.get("call_graph", {})
         calls = len(call_graph.get("calls", []))
@@ -456,7 +485,7 @@ class OptimaDocumentConstructor:
             return "High"
 
 
-def discover_json_files(output_dir: Path) -> Dict[str, Path]:
+def discover_json_files(output_dir: Path) -> dict[str, Path]:
     """
     Discover all JSON files in the output directory.
 

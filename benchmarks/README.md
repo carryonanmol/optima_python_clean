@@ -109,7 +109,7 @@ uses, so impact gains show graph usefulness, not independent retrieval ability).
 
 **Held-out protocol.** Query-instruction prefixes and routing profiles (`configs/routing_profiles.json`) were
 chosen on `structural_v2` / `structural_v1` + `tuning_literals.json` only (`scripts/tune_routing.py`); the developer
-benchmarks were run once afterwards (`configs/suites/dev-*.json`, results in `experiments_dev/`, report in
-`reports/optima_analytics_dev/`). The router's regular expressions were written by the same author as the developer
+benchmarks were run once afterwards (`configs/suites/dev-*.json`, results in `experiments_dev/`).
+The router's regular expressions were written by the same author as the developer
 queries, so they may be tuned to that phrasing; validate on queries from other people before relying on the numbers.
 Single annotator (AI-assisted), not independently reviewed.

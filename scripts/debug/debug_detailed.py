@@ -1,27 +1,29 @@
 #!/usr/bin/env python3
 
-import json
-import sys
 import os
+import sys
 import traceback
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from optima.rag.evaluation import OptimaRetrievalEvaluator, calculate_improvement_over_baseline
-from optima.rag.embedding_simple import OptimaEmbedder
-from pathlib import Path
+
+from optima.rag.evaluation import calculate_improvement_over_baseline
 
 # Monkey patch to add debugging
 original_calculate_improvement_over_baseline = calculate_improvement_over_baseline
+
 
 def debug_calculate_improvement_over_baseline(raw_metrics, enriched_metrics):
     print(f"DEBUG: raw_metrics keys: {list(raw_metrics.keys())}")
     print(f"DEBUG: enriched_metrics keys: {list(enriched_metrics.keys())}")
 
     # Check a few key values
-    for key in ['recall_at_1', 'recall_at_5', 'mrr']:
-        raw_val = raw_metrics.get(key, 'MISSING')
-        enriched_val = enriched_metrics.get(key, 'MISSING')
-        print(f"DEBUG: {key}: raw={raw_val} ({type(raw_val)}), enriched={enriched_val} ({type(enriched_val)})")
+    for key in ["recall_at_1", "recall_at_5", "mrr"]:
+        raw_val = raw_metrics.get(key, "MISSING")
+        enriched_val = enriched_metrics.get(key, "MISSING")
+        print(
+            f"DEBUG: {key}: raw={raw_val} ({type(raw_val)}), enriched={enriched_val} ({type(enriched_val)})"
+        )
 
         if isinstance(raw_val, list):
             print(f"DEBUG: RAW VAL IS LIST for {key}: {raw_val}")
@@ -39,15 +41,20 @@ def debug_calculate_improvement_over_baseline(raw_metrics, enriched_metrics):
         traceback.print_exc()
         raise
 
+
 # Replace the function
 import optima.rag.evaluation
-optima.rag.evaluation.calculate_improvement_over_baseline = debug_calculate_improvement_over_baseline
+
+optima.rag.evaluation.calculate_improvement_over_baseline = (
+    debug_calculate_improvement_over_baseline
+)
 
 # Now run the evaluation
 print("Running evaluation with debugging...")
 
-from optima.rag.__main__ import cmd_evaluate
 import argparse
+
+from optima.rag.__main__ import cmd_evaluate
 
 # Create args object
 args = argparse.Namespace()

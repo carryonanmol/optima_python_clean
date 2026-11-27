@@ -504,45 +504,6 @@ no dependency ground truth exists because `dependencies` is empty in the bundled
 Embedding models that need `trust_remote_code` (nomic, CodeRankEmbed) are not loaded unless
 `OPTIMA_TRUST_REMOTE_CODE=1` is set. Tests: `python -m unittest discover -s tests`.
 
-## Experiment Analytics (`optima_analytics`)
-
-Read-only analysis of everything in the experiment store (`experiments/*/runs/*/result.json`) and the
-enrichment artifacts (`output/**/enhanced_*.json`): unified validated tables, paired statistics with
-multiple-comparison correction, rankings, plots, Markdown reports and a self-contained dashboard.
-Install the extra with `pip install -e ".[analytics]"` (pandas, scipy, matplotlib).
-
-```bash
-# check inputs only: manifest + data-quality report (exit 1 with --strict when errors exist)
-python -m optima_analytics validate --input-dir experiments --output-dir reports/optima_analytics
-
-# everything: CSVs, statistical_tests.csv, plots/, plot_data/, markdown reports, index.html
-python -m optima_analytics generate --input-dir experiments --output-dir reports/optima_analytics
-
-# figures only (optionally a subset by name substring)
-python -m optima_analytics plots --output-dir reports/optima_analytics --only A01 F36
-```
-
-Useful options: `--input-dir` / `--enriched-dir` (repeatable), `--base-dir`, `--datasets`, `--n-boot`,
-`--n-perm`, `--seed`, `--no-legacy`, `--force`. `generate` refuses to overwrite an existing report and
-refuses an output directory inside an input directory. Open `reports/optima_analytics/index.html`
-directly in a browser (no server, no external resources).
-
-What it does and does not do:
-
-* Runs repeated with the same dataset/configuration/corpus are counted once (and checked to be identical);
-  enrichment files whose recorded `base_sha256` does not match their project's `base.json`, and runs that
-  used them, are flagged and excluded from enrichment analyses (never modified or deleted).
-* Enrichment effects are measured against a *matched no-enrichment counterpart* of the same retrieval stack
-  (raw dense, raw dense+BM25, raw+compiler stack), so retrieval-stack effects are not credited to enrichment.
-  The crossed grid behind this comes from the `grid` ablation group (`configs/suites/*-grid.json`).
-* MRR is the only confirmatory metric; p-values are cluster-level (target function) sign-flip permutation
-  tests, intervals are cluster bootstraps, Holm and Benjamini-Hochberg corrections are applied within named
-  families. Model-level correlations (n = number of models) are descriptive only.
-* Model sizes/families come from `optima_analytics/model_catalog.json` (model-card values, `unknown` when not
-  documented); nothing is inferred from a model name.
-
-Tests: `python -m unittest discover -s tests -p "test_analytics_*.py"`.
-
 ### Query routing and instruction prefixes (research pipelines)
 
 `routing` (config section, off by default; hash of existing configs unchanged) classifies each query from its text

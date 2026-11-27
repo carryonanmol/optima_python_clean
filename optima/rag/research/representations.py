@@ -8,30 +8,34 @@ raw LLM response are deliberately not embedded.
 
 from __future__ import annotations
 
-from typing import Dict, Optional
-
 from optima.rag.document_constructor import _stringify
 
 from .config import RepresentationConfig
 from .corpus import Corpus, FunctionRecord, _usable_text
 
 _SEMANTIC_LABELS = (
-    ("purpose", "Purpose"), ("summary", "Summary"), ("behavior", "Behavior"),
-    ("inputs", "Inputs"), ("outputs", "Outputs"), ("side_effects", "Side effects"),
-    ("concepts", "Concepts"), ("keywords", "Keywords"), ("algorithm", "Algorithm"),
+    ("purpose", "Purpose"),
+    ("summary", "Summary"),
+    ("behavior", "Behavior"),
+    ("inputs", "Inputs"),
+    ("outputs", "Outputs"),
+    ("side_effects", "Side effects"),
+    ("concepts", "Concepts"),
+    ("keywords", "Keywords"),
+    ("algorithm", "Algorithm"),
 )
 
 
 def signature(record: FunctionRecord) -> str:
-    params = ", ".join(" ".join(part for part in (ptype, pname) if part)
-                       for ptype, pname in record.parameters)
+    params = ", ".join(
+        " ".join(part for part in (ptype, pname) if part) for ptype, pname in record.parameters
+    )
     prefix = f"{record.return_type} " if record.return_type else ""
     return f"{prefix}{record.qualified_name or record.name}({params})"
 
 
 def identity_header(record: FunctionRecord) -> str:
-    lines = [f"Function: {record.qualified_name or record.name}",
-             f"Signature: {signature(record)}"]
+    lines = [f"Function: {record.qualified_name or record.name}", f"Signature: {signature(record)}"]
     if record.file:
         lines.append(f"File: {record.file}")
     return "\n".join(lines)
@@ -44,17 +48,23 @@ def _truncate(text: str, limit: int) -> str:
 
 
 def raw_text(record: FunctionRecord, cfg: RepresentationConfig) -> str:
-    parts = [identity_header(record)] if cfg.identity_header else [
-        f"Function: {record.qualified_name or record.name}"]
+    parts = (
+        [identity_header(record)]
+        if cfg.identity_header
+        else [f"Function: {record.qualified_name or record.name}"]
+    )
     if record.source_code:
         parts.append("Source:\n" + record.source_code)
     return _truncate("\n".join(parts), cfg.raw_max_chars)
 
 
-def semantic_text(record: FunctionRecord, cfg: RepresentationConfig) -> Optional[str]:
+def semantic_text(record: FunctionRecord, cfg: RepresentationConfig) -> str | None:
     """Rendered enrichment, or ``None`` when the policy excludes the function."""
-    header = identity_header(record) if cfg.identity_header else (
-        f"Function: {record.qualified_name or record.name}")
+    header = (
+        identity_header(record)
+        if cfg.identity_header
+        else (f"Function: {record.qualified_name or record.name}")
+    )
     if not record.has_semantic or not record.semantic:
         if cfg.missing_semantic == "exclude":
             return None
@@ -97,18 +107,30 @@ def coupled_text(record: FunctionRecord, cfg: RepresentationConfig) -> str:
     lines = _semantic_lines(record)
     if not lines:
         return _truncate(raw_text(record, cfg), cfg.coupled_max_chars)
-    header = identity_header(record) if cfg.identity_header else (
-        f"Function: {record.qualified_name or record.name}")
+    header = (
+        identity_header(record)
+        if cfg.identity_header
+        else (f"Function: {record.qualified_name or record.name}")
+    )
     description = _truncate("Description:\n" + "\n".join(lines), cfg.semantic_max_chars)
-    source = _truncate("Source:\n" + record.source_code, cfg.raw_max_chars) if record.source_code else ""
-    parts = [header, description, source] if cfg.coupled_order == "semantic_first" else [header, source, description]
+    source = (
+        _truncate("Source:\n" + record.source_code, cfg.raw_max_chars) if record.source_code else ""
+    )
+    parts = (
+        [header, description, source]
+        if cfg.coupled_order == "semantic_first"
+        else [header, source, description]
+    )
     return _truncate("\n".join(p for p in parts if p), cfg.coupled_max_chars)
 
 
 def compiler_text(record: FunctionRecord, corpus: Corpus, cfg: RepresentationConfig) -> str:
     """Structural facts only: call relationships, class membership, CFG summary."""
-    header = identity_header(record) if cfg.identity_header else (
-        f"Function: {record.qualified_name or record.name}")
+    header = (
+        identity_header(record)
+        if cfg.identity_header
+        else (f"Function: {record.qualified_name or record.name}")
+    )
     parts = [header]
     if record.class_name:
         kind = "method of" if record.is_method else "member of"
@@ -137,18 +159,17 @@ def compiler_text(record: FunctionRecord, corpus: Corpus, cfg: RepresentationCon
     return _truncate("\n".join(parts), cfg.compiler_max_chars)
 
 
-def build_texts(corpus: Corpus, representation: str,
-                cfg: RepresentationConfig) -> Dict[str, str]:
+def build_texts(corpus: Corpus, representation: str, cfg: RepresentationConfig) -> dict[str, str]:
     """Texts for one representation, keyed by function ID, in corpus order.
 
     A function missing from the result was excluded by policy (only possible for
     ``semantic`` with ``missing_semantic="exclude"``); it is never silently lost
     otherwise.
     """
-    texts: Dict[str, str] = {}
+    texts: dict[str, str] = {}
     for ident, record in corpus.records.items():
         if representation == "raw":
-            text: Optional[str] = raw_text(record, cfg)
+            text: str | None = raw_text(record, cfg)
         elif representation == "semantic":
             text = semantic_text(record, cfg)
         elif representation == "compiler":

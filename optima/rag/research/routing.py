@@ -16,23 +16,34 @@ so they can be tuned without touching code.  With routing disabled nothing here 
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 from .lexical import ExactSymbolMatcher, normalize_query
 
 CLASSES = ("literal", "structural", "symbol", "natural")
-PROFILE_KEYS = ("dense_weight", "bm25_weight", "exact_weight", "graph_weight", "representation_weights")
+PROFILE_KEYS = (
+    "dense_weight",
+    "bm25_weight",
+    "exact_weight",
+    "graph_weight",
+    "representation_weights",
+)
 
 _QUOTED = re.compile(r"""(['"`])(?P<body>[^'"`]{6,}?)\1""")
 _STRUCTURAL = re.compile(
     r"\b(calls?|called|callers?|callees?|invokes?|invoked|depends?|depend(?:s|ed)?\s+on|relies|rely|reach(?:es)?|"
-    r"breaks?|uses?|used|impact)\b", re.IGNORECASE)
+    r"breaks?|uses?|used|impact)\b",
+    re.IGNORECASE,
+)
 
 # "which functions use the identifier X" is a text search for a token, not an impact question.
-_TEXT_SEARCH = re.compile(r"\b(identifier|macro|constant|token|references?|mentions?)\b", re.IGNORECASE)
+_TEXT_SEARCH = re.compile(
+    r"\b(identifier|macro|constant|token|references?|mentions?)\b", re.IGNORECASE
+)
 
 # Neutral by default: identical to the un-routed pipeline until tuned profiles are supplied.
-DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {c: {} for c in CLASSES}
+DEFAULT_PROFILES: dict[str, dict[str, Any]] = {c: {} for c in CLASSES}
 
 
 def classify_query(query: str) -> str:
@@ -48,7 +59,9 @@ def classify_query(query: str) -> str:
     return "natural"
 
 
-def profile_for(query_class: str, overrides: Optional[Mapping[str, Mapping[str, Any]]]) -> Dict[str, Any]:
+def profile_for(
+    query_class: str, overrides: Mapping[str, Mapping[str, Any]] | None
+) -> dict[str, Any]:
     profile = dict(DEFAULT_PROFILES.get(query_class, {}))
     profile.update(dict((overrides or {}).get(query_class, {})))
     return profile

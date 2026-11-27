@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 
-import json
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from optima.rag.evaluation import OptimaRetrievalEvaluator
-from optima.rag.embedding_simple import OptimaEmbedder
-from langchain_community.vectorstores import FAISS
 from pathlib import Path
-import numpy as np
+
+from optima.rag.embedding_simple import OptimaEmbedder
+from optima.rag.evaluation import OptimaRetrievalEvaluator
 
 # Create a simple test
 print("Creating test evaluator...")
@@ -23,7 +22,7 @@ dummy_queries = [
         "function_name": "test_func",
         "qualified_name": "test::test_func",
         "function_id": "test_file.c::test_func",
-        "difficulty": "easy"
+        "difficulty": "easy",
     },
     {
         "query": "How does the main function work?",
@@ -31,8 +30,8 @@ dummy_queries = [
         "function_name": "main",
         "qualified_name": "globals::main",
         "function_id": "main.cpp::main",
-        "difficulty": "moderate"
-    }
+        "difficulty": "moderate",
+    },
 ]
 
 print(f"Created {len(dummy_queries)} dummy queries")
@@ -69,6 +68,7 @@ if indices_dir.exists():
             except Exception as e:
                 print(f"Evaluation failed: {e}")
                 import traceback
+
                 traceback.print_exc()
         else:
             print("Failed to load vector store")

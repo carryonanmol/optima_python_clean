@@ -2,14 +2,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from research_fixtures import write_fixture
+
 from optima.rag.research.config import ConfigError, PipelineConfig, RepresentationConfig
 from optima.rag.research.corpus import load_corpus
 from optima.rag.research.dense import HashingEncoder
 from optima.rag.research.pipeline import ResearchPipeline
 from optima.rag.research.plan import PlanBuilder
 from optima.rag.research.representations import build_texts, coupled_text
-
-from research_fixtures import write_fixture
 
 
 class CoupledTextTests(unittest.TestCase):
@@ -39,7 +39,9 @@ class CoupledTextTests(unittest.TestCase):
         other = coupled_text(record, RepresentationConfig(coupled_order="source_first"))
         self.assertLess(first.index("Description:"), first.index("Source:"))
         self.assertLess(other.index("Source:"), other.index("Description:"))
-        self.assertEqual(sorted(first.split("\n")), sorted(other.split("\n")))      # same content, different order
+        self.assertEqual(
+            sorted(first.split("\n")), sorted(other.split("\n"))
+        )  # same content, different order
 
     def test_function_without_enrichment_falls_back_to_raw_text(self):
         if not self.plain:
@@ -58,8 +60,13 @@ class CoupledTextTests(unittest.TestCase):
 
 class CoupledConfigTests(unittest.TestCase):
     def base(self, **kw):
-        data = {"name": "t", "embedding_model": "hashing", "enriched_json": "e.json", "enrichment_model": "m",
-                "retrieval": {"representations": ["coupled"], "dense": True}}
+        data = {
+            "name": "t",
+            "embedding_model": "hashing",
+            "enriched_json": "e.json",
+            "enrichment_model": "m",
+            "retrieval": {"representations": ["coupled"], "dense": True},
+        }
         data.update(kw)
         return data
 
@@ -77,22 +84,46 @@ class CoupledConfigTests(unittest.TestCase):
         self.assertNotEqual(a.config_hash(), b.config_hash())
 
     def test_coupled_fields_do_not_change_hashes_of_configs_that_do_not_use_them(self):
-        plain = PipelineConfig.from_dict({"name": "t", "embedding_model": "hashing", "retrieval": {"representations": ["raw"]}})
-        tweaked = PipelineConfig.from_dict({"name": "t", "embedding_model": "hashing", "retrieval": {"representations": ["raw"]},
-                                            "representation": {"coupled_order": "source_first", "coupled_max_chars": 999}})
+        plain = PipelineConfig.from_dict(
+            {"name": "t", "embedding_model": "hashing", "retrieval": {"representations": ["raw"]}}
+        )
+        tweaked = PipelineConfig.from_dict(
+            {
+                "name": "t",
+                "embedding_model": "hashing",
+                "retrieval": {"representations": ["raw"]},
+                "representation": {"coupled_order": "source_first", "coupled_max_chars": 999},
+            }
+        )
         self.assertEqual(plain.config_hash(), tweaked.config_hash())
 
     def test_plan_group_builds_matched_pairs(self):
-        specs = PlanBuilder("b.json", {"e1": "e1.json"}, "e1", ["bge-small"], "bge-small").build(["coupled"])
+        specs = PlanBuilder("b.json", {"e1": "e1.json"}, "e1", ["bge-small"], "bge-small").build(
+            ["coupled"]
+        )
         variants = [s.tags["variant"] for s in specs]
-        self.assertEqual(variants, ["raw_baseline", "separate_dense", "coupled_dense", "coupled_dense_src",
-                                    "separate_hybrid", "coupled_hybrid", "coupled_hybrid_src"])
+        self.assertEqual(
+            variants,
+            [
+                "raw_baseline",
+                "separate_dense",
+                "coupled_dense",
+                "coupled_dense_src",
+                "separate_hybrid",
+                "coupled_hybrid",
+                "coupled_hybrid_src",
+            ],
+        )
         by = {s.tags["variant"]: s for s in specs}
         self.assertEqual(by["coupled_hybrid"].config.retrieval.representations, ("coupled",))
-        self.assertEqual(by["separate_hybrid"].config.retrieval.representations, ("raw", "semantic"))
+        self.assertEqual(
+            by["separate_hybrid"].config.retrieval.representations, ("raw", "semantic")
+        )
         self.assertTrue(by["coupled_hybrid"].config.retrieval.bm25)
         self.assertFalse(by["coupled_dense"].config.retrieval.bm25)
-        self.assertEqual(by["coupled_dense_src"].config.representation.coupled_order, "source_first")
+        self.assertEqual(
+            by["coupled_dense_src"].config.representation.coupled_order, "source_first"
+        )
 
 
 class CoupledRetrievalTests(unittest.TestCase):
@@ -100,8 +131,15 @@ class CoupledRetrievalTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             paths = write_fixture(Path(tmp))
             corpus = load_corpus(paths["base"], paths["enriched"])
-            cfg = PipelineConfig.from_dict({"name": "t", "embedding_model": "hashing", "enriched_json": str(paths["enriched"]),
-                                            "enrichment_model": "m", "retrieval": {"representations": ["coupled"], "dense": True, "bm25": True}})
+            cfg = PipelineConfig.from_dict(
+                {
+                    "name": "t",
+                    "embedding_model": "hashing",
+                    "enriched_json": str(paths["enriched"]),
+                    "enrichment_model": "m",
+                    "retrieval": {"representations": ["coupled"], "dense": True, "bm25": True},
+                }
+            )
             pipe = ResearchPipeline(cfg, corpus=corpus, encoder=HashingEncoder())
             pipe.build()
             target = next(r for r in corpus.records.values() if r.has_semantic)
@@ -111,7 +149,9 @@ class CoupledRetrievalTests(unittest.TestCase):
             hit = [r.function_id for r in pipe.search(f"where is {target.name} defined").results]
             self.assertIn(target.id, hit[:3])
             result = pipe.search(by_enrichment)
-            self.assertTrue(all(c["source"].endswith(":coupled") for r in result.results for c in r.sources))
+            self.assertTrue(
+                all(c["source"].endswith(":coupled") for r in result.results for c in r.sources)
+            )
 
 
 if __name__ == "__main__":

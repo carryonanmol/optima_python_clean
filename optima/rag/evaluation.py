@@ -3,18 +3,15 @@ Evaluation module for Optima RAG system.
 Handles benchmark creation, retrieval evaluation, and metric calculation.
 """
 
+import csv
 import json
 import logging
-import csv
-from typing import List, Dict, Any, Optional, Tuple
-from pathlib import Path
 import time
-import numpy as np
-from collections import defaultdict
+from pathlib import Path
+from typing import Any
 
-from langchain_core.documents import Document
+import numpy as np
 from langchain_community.vectorstores import FAISS
-from langchain_core.retrievers import BaseRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +19,7 @@ logger = logging.getLogger(__name__)
 class OptimaRetrievalEvaluator:
     """Evaluates retrieval performance for Optima RAG system."""
 
-    def __init__(self, k_values: List[int] = [1, 3, 5, 10]):
+    def __init__(self, k_values: list[int] = [1, 3, 5, 10]):
         """
         Initialize the evaluator.
 
@@ -31,8 +28,9 @@ class OptimaRetrievalEvaluator:
         """
         self.k_values = k_values
 
-    def create_benchmark_queries(self, functions: List[Dict[str, Any]],
-                               num_queries: int = 20) -> List[Dict[str, Any]]:
+    def create_benchmark_queries(
+        self, functions: list[dict[str, Any]], num_queries: int = 20
+    ) -> list[dict[str, Any]]:
         """
         Create benchmark queries from function data.
 
@@ -63,7 +61,7 @@ class OptimaRetrievalEvaluator:
             candidate_functions = functions
 
         # Select subset for queries
-        selected_functions = candidate_functions[:min(num_queries, len(candidate_functions))]
+        selected_functions = candidate_functions[: min(num_queries, len(candidate_functions))]
 
         queries = []
         for func in selected_functions:
@@ -76,31 +74,35 @@ class OptimaRetrievalEvaluator:
             if not query:
                 query = f"What does the function {func_name} do?"
 
-            queries.append({
-                "query": query,
-                "relevant_functions": [func_id] if func_id else [qualified_name],
-                "function_name": func_name,
-                "qualified_name": qualified_name,
-                "function_id": func_id
-            })
+            queries.append(
+                {
+                    "query": query,
+                    "relevant_functions": [func_id] if func_id else [qualified_name],
+                    "function_name": func_name,
+                    "qualified_name": qualified_name,
+                    "function_id": func_id,
+                }
+            )
 
         # If we need more queries, generate some generic ones
         while len(queries) < num_queries:
             func = selected_functions[len(queries) % len(selected_functions)]
             func_name = func.get("name", "unknown")
             func_id = func.get("id", "")
-            queries.append({
-                "query": f"How does the {func_name} function work?",
-                "relevant_functions": [func_id] if func_id else [func_name],
-                "function_name": func_name,
-                "qualified_name": func.get("qualified_name", func_name),
-                "function_id": func_id
-            })
+            queries.append(
+                {
+                    "query": f"How does the {func_name} function work?",
+                    "relevant_functions": [func_id] if func_id else [func_name],
+                    "function_name": func_name,
+                    "qualified_name": func.get("qualified_name", func_name),
+                    "function_id": func_id,
+                }
+            )
 
         logger.info(f"Created {len(queries)} benchmark queries")
         return queries[:num_queries]
 
-    def _generate_natural_language_query(self, func: Dict[str, Any]) -> Optional[str]:
+    def _generate_natural_language_query(self, func: dict[str, Any]) -> str | None:
         """Generate a natural language query from function data."""
         name = func.get("name", "")
         return_type = func.get("return_type", "")
@@ -130,12 +132,15 @@ class OptimaRetrievalEvaluator:
 
         return None
 
-    def evaluate_retrieval(self, vector_store: FAISS,
-                          queries: List[Dict[str, Any]],
-                          k: int = 10,
-                          corpus_name: Optional[str] = None,
-                          debug: bool = False,
-                          debug_limit: int = 20) -> Dict[str, Any]:
+    def evaluate_retrieval(
+        self,
+        vector_store: FAISS,
+        queries: list[dict[str, Any]],
+        k: int = 10,
+        corpus_name: str | None = None,
+        debug: bool = False,
+        debug_limit: int = 20,
+    ) -> dict[str, Any]:
         """
         Evaluate retrieval performance using benchmark queries.
 
@@ -160,7 +165,7 @@ class OptimaRetrievalEvaluator:
             "hit_rate_at_k": {k_val: [] for k_val in self.k_values},
             "latencies": [],
             "queries_evaluated": 0,
-            "queries_with_results": 0
+            "queries_with_results": 0,
         }
         per_query_results = []
 
@@ -179,7 +184,7 @@ class OptimaRetrievalEvaluator:
                     retrieved_docs = [doc for doc, _score in scored_docs]
                     scores = [float(score) for _doc, score in scored_docs]
                 else:
-                    if hasattr(retriever, 'get_relevant_documents'):
+                    if hasattr(retriever, "get_relevant_documents"):
                         retrieved_docs = retriever.get_relevant_documents(query_text)
                     else:
                         retrieved_docs = retriever.invoke(query_text)
@@ -196,19 +201,21 @@ class OptimaRetrievalEvaluator:
                     func_id = doc.metadata.get("function_id", "")
                     qualified_name = doc.metadata.get("qualified_name", "")
                     result_id = func_id or qualified_name
-                    ranked_results.append({
-                        "function_id": result_id,
-                        "rank": rank,
-                        "score": score,
-                        "relevant": bool(
-                            result_id in relevant_func_ids
-                            or (qualified_name and qualified_name in relevant_func_ids)
-                        )
-                    })
+                    ranked_results.append(
+                        {
+                            "function_id": result_id,
+                            "rank": rank,
+                            "score": score,
+                            "relevant": bool(
+                                result_id in relevant_func_ids
+                                or (qualified_name and qualified_name in relevant_func_ids)
+                            ),
+                        }
+                    )
 
                 # Calculate metrics for each k value
                 for k_val in self.k_values:
-                    cutoff_results = ranked_results[:min(k_val, len(ranked_results))]
+                    cutoff_results = ranked_results[: min(k_val, len(ranked_results))]
                     retrieved_func_ids = {result["function_id"] for result in cutoff_results}
                     # Recall@k: proportion of relevant functions retrieved
                     if relevant_func_ids:
@@ -242,25 +249,30 @@ class OptimaRetrievalEvaluator:
                         break
                 metrics["mrr_scores"].append(rr)
 
-                per_query_results.append({
-                    "query_id": query_data.get("query_id", f"q_{query_index + 1:04d}"),
-                    "difficulty": query_data.get("difficulty", ""),
-                    "category": query_data.get("category", ""),
-                    "query": query_text,
-                    "relevant_functions": list(relevant_func_ids),
-                    "retrieved": ranked_results,
-                    "top_1_function": ranked_results[0]["function_id"] if ranked_results else "",
-                    "top_5_functions": [r["function_id"] for r in ranked_results[:5]],
-                    "top_10_functions": [r["function_id"] for r in ranked_results[:10]],
-                    "first_relevant_rank": first_relevant_rank,
-                    "reciprocal_rank": rr,
-                })
+                per_query_results.append(
+                    {
+                        "query_id": query_data.get("query_id", f"q_{query_index + 1:04d}"),
+                        "difficulty": query_data.get("difficulty", ""),
+                        "category": query_data.get("category", ""),
+                        "query": query_text,
+                        "relevant_functions": list(relevant_func_ids),
+                        "retrieved": ranked_results,
+                        "top_1_function": ranked_results[0]["function_id"]
+                        if ranked_results
+                        else "",
+                        "top_5_functions": [r["function_id"] for r in ranked_results[:5]],
+                        "top_10_functions": [r["function_id"] for r in ranked_results[:10]],
+                        "first_relevant_rank": first_relevant_rank,
+                        "reciprocal_rank": rr,
+                    }
+                )
                 if debug and query_index < debug_limit:
                     target = ", ".join(sorted(relevant_func_ids))
                     rank_text = str(first_relevant_rank) if first_relevant_rank else "no hit"
                     score_text = (
                         f"{ranked_results[first_relevant_rank - 1]['score']:.4f}"
-                        if first_relevant_rank and ranked_results[first_relevant_rank - 1]["score"] is not None
+                        if first_relevant_rank
+                        and ranked_results[first_relevant_rank - 1]["score"] is not None
                         else "n/a"
                     )
                     print(f"Query {per_query_results[-1]['query_id']}")
@@ -279,19 +291,21 @@ class OptimaRetrievalEvaluator:
                     metrics["precision_at_k"][k_val].append(0.0)
                     metrics["hit_rate_at_k"][k_val].append(0.0)
                 metrics["mrr_scores"].append(0.0)
-                per_query_results.append({
-                    "query_id": query_data.get("query_id", f"q_{query_index + 1:04d}"),
-                    "difficulty": query_data.get("difficulty", ""),
-                    "category": query_data.get("category", ""),
-                    "query": query_text,
-                    "relevant_functions": list(relevant_func_ids),
-                    "retrieved": [],
-                    "top_1_function": "",
-                    "top_5_functions": [],
-                    "top_10_functions": [],
-                    "first_relevant_rank": None,
-                    "reciprocal_rank": 0.0,
-                })
+                per_query_results.append(
+                    {
+                        "query_id": query_data.get("query_id", f"q_{query_index + 1:04d}"),
+                        "difficulty": query_data.get("difficulty", ""),
+                        "category": query_data.get("category", ""),
+                        "query": query_text,
+                        "relevant_functions": list(relevant_func_ids),
+                        "retrieved": [],
+                        "top_1_function": "",
+                        "top_5_functions": [],
+                        "top_10_functions": [],
+                        "first_relevant_rank": None,
+                        "reciprocal_rank": 0.0,
+                    }
+                )
                 metrics["queries_evaluated"] += 1
 
         # Calculate final metrics
@@ -311,17 +325,21 @@ class OptimaRetrievalEvaluator:
             hit_scores = metrics["hit_rate_at_k"][k_val]
 
             final_metrics[f"recall_at_{k_val}"] = np.mean(recall_scores) if recall_scores else 0.0
-            final_metrics[f"precision_at_{k_val}"] = np.mean(precision_scores) if precision_scores else 0.0
+            final_metrics[f"precision_at_{k_val}"] = (
+                np.mean(precision_scores) if precision_scores else 0.0
+            )
             final_metrics[f"hit_rate_at_{k_val}"] = np.mean(hit_scores) if hit_scores else 0.0
 
         # Add MRR
         final_metrics["mrr"] = np.mean(metrics["mrr_scores"]) if metrics["mrr_scores"] else 0.0
 
-        logger.info(f"Evaluation completed: MRR={final_metrics['mrr']:.4f}, "
-                   f"Recall@5={final_metrics.get('recall_at_5', 0):.4f}")
+        logger.info(
+            f"Evaluation completed: MRR={final_metrics['mrr']:.4f}, "
+            f"Recall@5={final_metrics.get('recall_at_5', 0):.4f}"
+        )
         return final_metrics
 
-    def _empty_metrics(self) -> Dict[str, Any]:
+    def _empty_metrics(self) -> dict[str, Any]:
         """Return empty metrics structure."""
         metrics = {
             "num_queries": 0,
@@ -329,7 +347,7 @@ class OptimaRetrievalEvaluator:
             "queries_with_results": 0,
             "mean_latency": 0.0,
             "median_latency": 0.0,
-            "mrr": 0.0
+            "mrr": 0.0,
         }
         for k_val in self.k_values:
             metrics[f"recall_at_{k_val}"] = 0.0
@@ -337,11 +355,14 @@ class OptimaRetrievalEvaluator:
             metrics[f"hit_rate_at_{k_val}"] = 0.0
         return metrics
 
-    def evaluate_multiple_corpora(self, corpus_indices: Dict[str, FAISS],
-                                benchmark_queries: List[Dict[str, Any]],
-                                k: int = 10,
-                                debug: bool = False,
-                                debug_limit: int = 20) -> Dict[str, Dict[str, Any]]:
+    def evaluate_multiple_corpora(
+        self,
+        corpus_indices: dict[str, FAISS],
+        benchmark_queries: list[dict[str, Any]],
+        k: int = 10,
+        debug: bool = False,
+        debug_limit: int = 20,
+    ) -> dict[str, dict[str, Any]]:
         """
         Evaluate retrieval performance across multiple corpora with difficulty-level metrics.
 
@@ -353,7 +374,9 @@ class OptimaRetrievalEvaluator:
         Returns:
             Dictionary mapping corpus names to their evaluation metrics (overall and by difficulty)
         """
-        logger.info(f"Evaluating {len(corpus_indices)} corpora with {len(benchmark_queries)} queries")
+        logger.info(
+            f"Evaluating {len(corpus_indices)} corpora with {len(benchmark_queries)} queries"
+        )
 
         results = {}
         for corpus_name, vector_store in corpus_indices.items():
@@ -368,8 +391,12 @@ class OptimaRetrievalEvaluator:
             try:
                 # Overall metrics
                 overall_metrics = self.evaluate_retrieval(
-                    vector_store, benchmark_queries, k, corpus_name=corpus_name,
-                    debug=debug, debug_limit=debug_limit
+                    vector_store,
+                    benchmark_queries,
+                    k,
+                    corpus_name=corpus_name,
+                    debug=debug,
+                    debug_limit=debug_limit,
                 )
 
                 # Difficulty-level metrics
@@ -377,12 +404,18 @@ class OptimaRetrievalEvaluator:
                 difficulties = ["easy", "moderate", "difficult"]
                 for difficulty in difficulties:
                     # Filter queries by difficulty
-                    diff_queries = [q for q in benchmark_queries if q.get("difficulty") == difficulty]
+                    diff_queries = [
+                        q for q in benchmark_queries if q.get("difficulty") == difficulty
+                    ]
                     if diff_queries:
                         diff_metrics = self.evaluate_retrieval(vector_store, diff_queries, k)
                         # Prefix metrics with difficulty level
                         for key, value in diff_metrics.items():
-                            if key not in ["num_queries", "queries_evaluated", "queries_with_results"]:
+                            if key not in [
+                                "num_queries",
+                                "queries_evaluated",
+                                "queries_with_results",
+                            ]:
                                 difficulty_metrics[f"{difficulty}_{key}"] = value
                         difficulty_metrics[f"{difficulty}_num_queries"] = len(diff_queries)
                     else:
@@ -397,12 +430,21 @@ class OptimaRetrievalEvaluator:
                         difficulty_metrics[f"{difficulty}_median_latency"] = 0.0
 
                 category_metrics = {}
-                categories = sorted({q.get("category", "") for q in benchmark_queries if q.get("category")})
+                categories = sorted(
+                    {q.get("category", "") for q in benchmark_queries if q.get("category")}
+                )
                 for category in categories:
-                    category_queries = [q for q in benchmark_queries if q.get("category") == category]
+                    category_queries = [
+                        q for q in benchmark_queries if q.get("category") == category
+                    ]
                     category_result = self.evaluate_retrieval(vector_store, category_queries, k)
                     for key, value in category_result.items():
-                        if key not in ["num_queries", "queries_evaluated", "queries_with_results", "per_query_results"]:
+                        if key not in [
+                            "num_queries",
+                            "queries_evaluated",
+                            "queries_with_results",
+                            "per_query_results",
+                        ]:
                             category_metrics[f"{category}_{key}"] = value
                     category_metrics[f"{category}_num_queries"] = len(category_queries)
 
@@ -420,7 +462,7 @@ class OptimaRetrievalEvaluator:
         return results
 
 
-def load_corpus_indices(output_base_dir: Path, embedding_model_name: str) -> Dict[str, FAISS]:
+def load_corpus_indices(output_base_dir: Path, embedding_model_name: str) -> dict[str, FAISS]:
     """
     Load all vector indices for a given embedding model.
 
@@ -432,7 +474,9 @@ def load_corpus_indices(output_base_dir: Path, embedding_model_name: str) -> Dic
         Dictionary mapping corpus names to FAISS indices
     """
     from .embedding_simple import (
-        OptimaEmbedder, embedding_alias, index_directory, resolve_embedding_model
+        OptimaEmbedder,
+        embedding_alias,
+        resolve_embedding_model,
     )
 
     report_dir = Path(output_base_dir)
@@ -445,7 +489,7 @@ def load_corpus_indices(output_base_dir: Path, embedding_model_name: str) -> Dic
     alias = embedding_alias(embedding_model_name)
     # Canonical layout is indexes/<corpus>/<alias>.  Then add the old layout
     # indexes/<model-name>/<corpus> as a compatibility fallback.
-    candidates: Dict[str, Path] = {}
+    candidates: dict[str, Path] = {}
     for corpus_dir in indexes_dir.iterdir():
         if not corpus_dir.is_dir():
             continue
@@ -499,12 +543,11 @@ def load_corpus_indices(output_base_dir: Path, embedding_model_name: str) -> Dic
     return corpus_indices
 
 
-def _result_matrix(results: Dict[str, Any]) -> Dict[str, Dict[str, Dict[str, Any]]]:
+def _result_matrix(results: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]]]:
     """Normalize old flat results and new embedding x corpus results."""
     if not results:
         return {}
-    if all(isinstance(value, dict) and "per_query_results" in value
-           for value in results.values()):
+    if all(isinstance(value, dict) and "per_query_results" in value for value in results.values()):
         return {"default": results}
     matrix = {}
     for embedding, corpora in results.items():
@@ -513,28 +556,35 @@ def _result_matrix(results: Dict[str, Any]) -> Dict[str, Dict[str, Dict[str, Any
     return matrix
 
 
-def weighted_overall_score(metrics: Dict[str, Any],
-                           weights: Optional[Dict[str, float]] = None) -> float:
+def weighted_overall_score(
+    metrics: dict[str, Any], weights: dict[str, float] | None = None
+) -> float:
     """Calculate a bounded score useful for comparing matrix rows."""
     weights = weights or {
-        "mrr": 0.30, "recall_at_5": 0.35,
-        "hit_rate_at_5": 0.20, "precision_at_5": 0.15,
+        "mrr": 0.30,
+        "recall_at_5": 0.35,
+        "hit_rate_at_5": 0.20,
+        "precision_at_5": 0.15,
     }
-    total = sum(float(metrics.get(key, 0.0) or 0.0) * weight
-                for key, weight in weights.items())
+    total = sum(float(metrics.get(key, 0.0) or 0.0) * weight for key, weight in weights.items())
     return round(total / sum(weights.values()), 6) if weights else 0.0
 
 
-def evaluate_embedding_matrix(output_base_dir: Path, embedding_models: List[str],
-                              benchmark_queries: List[Dict[str, Any]], k: int = 10,
-                              corpora: Optional[List[str]] = None,
-                              enrichment_models: Optional[List[str]] = None,
-                              difficulty: Optional[str] = None,
-                              categories: Optional[List[str]] = None,
-                              debug: bool = False,
-                              debug_limit: int = 20) -> Dict[str, Dict[str, Any]]:
+def evaluate_embedding_matrix(
+    output_base_dir: Path,
+    embedding_models: list[str],
+    benchmark_queries: list[dict[str, Any]],
+    k: int = 10,
+    corpora: list[str] | None = None,
+    enrichment_models: list[str] | None = None,
+    difficulty: str | None = None,
+    categories: list[str] | None = None,
+    debug: bool = False,
+    debug_limit: int = 20,
+) -> dict[str, dict[str, Any]]:
     """Evaluate every selected enrichment corpus for every embedding alias."""
     from .embedding_simple import embedding_alias
+
     evaluator = OptimaRetrievalEvaluator()
     queries = benchmark_queries
     if difficulty:
@@ -544,16 +594,17 @@ def evaluate_embedding_matrix(output_base_dir: Path, embedding_models: List[str]
         queries = [q for q in queries if q.get("category") in wanted]
     selected_corpora = set(corpora or [])
     selected_enrichment = set(enrichment_models or [])
-    matrix: Dict[str, Dict[str, Any]] = {}
+    matrix: dict[str, dict[str, Any]] = {}
     for model in embedding_models:
         indices = load_corpus_indices(output_base_dir, model)
         if selected_corpora:
-            indices = {name: store for name, store in indices.items()
-                       if name in selected_corpora}
+            indices = {name: store for name, store in indices.items() if name in selected_corpora}
         if selected_enrichment:
-            indices = {name: store for name, store in indices.items()
-                       if name in selected_enrichment or
-                       (name == "raw" and "raw" in selected_enrichment)}
+            indices = {
+                name: store
+                for name, store in indices.items()
+                if name in selected_enrichment or (name == "raw" and "raw" in selected_enrichment)
+            }
         evaluated = evaluator.evaluate_multiple_corpora(
             indices, queries, k, debug=debug, debug_limit=debug_limit
         )
@@ -567,21 +618,28 @@ def evaluate_embedding_matrix(output_base_dir: Path, embedding_models: List[str]
     return matrix
 
 
-def save_matrix_csv(results: Dict[str, Any], output_path: Path) -> None:
+def save_matrix_csv(results: dict[str, Any], output_path: Path) -> None:
     """Save aggregate metrics for a flat or embedding x corpus result set."""
     matrix = _result_matrix(results)
-    metric_names = [
-        "recall_at_1", "recall_at_3", "recall_at_5", "recall_at_10",
-        "precision_at_1", "precision_at_3", "precision_at_5", "precision_at_10",
-        "hit_rate_at_1", "hit_rate_at_3", "hit_rate_at_5", "hit_rate_at_10",
-        "mrr", "mean_latency", "median_latency", "queries_evaluated",
-    ]
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["enrichment_model", "embedding_model",
-                                                     "functions", "queries", "R@1", "R@5",
-                                                     "R@10", "MRR", "Hit@5", "avg_latency",
-                                                     "median_latency", "weighted_overall_score"])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "enrichment_model",
+                "embedding_model",
+                "functions",
+                "queries",
+                "R@1",
+                "R@5",
+                "R@10",
+                "MRR",
+                "Hit@5",
+                "avg_latency",
+                "median_latency",
+                "weighted_overall_score",
+            ],
+        )
         writer.writeheader()
         for embedding, corpora in matrix.items():
             for corpus, metrics in corpora.items():
@@ -604,7 +662,7 @@ def save_matrix_csv(results: Dict[str, Any], output_path: Path) -> None:
                 writer.writerow(row)
 
 
-def save_best_combinations(results: Dict[str, Any], output_dir: Path) -> None:
+def save_best_combinations(results: dict[str, Any], output_dir: Path) -> None:
     """Write ranked combinations and best choices for each experimental axis."""
     matrix = _result_matrix(results)
     rows = []
@@ -613,25 +671,37 @@ def save_best_combinations(results: Dict[str, Any], output_dir: Path) -> None:
             if not isinstance(metrics, dict) or "error" in metrics:
                 continue
             difficult = "difficult_"
-            rows.append({
-                "enrichment_model": corpus,
-                "embedding_model": embedding,
-                "R@1": metrics.get("recall_at_1", 0.0),
-                "R@5": metrics.get("recall_at_5", 0.0),
-                "R@10": metrics.get("recall_at_10", 0.0),
-                "MRR": metrics.get("mrr", 0.0),
-                "Hit@5": metrics.get("hit_rate_at_5", 0.0),
-                "difficult_R@1": metrics.get(difficult + "recall_at_1", 0.0),
-                "difficult_MRR": metrics.get(difficult + "mrr", 0.0),
-                "overall_score": weighted_overall_score(metrics),
-            })
+            rows.append(
+                {
+                    "enrichment_model": corpus,
+                    "embedding_model": embedding,
+                    "R@1": metrics.get("recall_at_1", 0.0),
+                    "R@5": metrics.get("recall_at_5", 0.0),
+                    "R@10": metrics.get("recall_at_10", 0.0),
+                    "MRR": metrics.get("mrr", 0.0),
+                    "Hit@5": metrics.get("hit_rate_at_5", 0.0),
+                    "difficult_R@1": metrics.get(difficult + "recall_at_1", 0.0),
+                    "difficult_MRR": metrics.get(difficult + "mrr", 0.0),
+                    "overall_score": weighted_overall_score(metrics),
+                }
+            )
     rows.sort(key=lambda row: row["overall_score"], reverse=True)
     for rank, row in enumerate(rows, 1):
         row["rank"] = rank
     output_dir.mkdir(parents=True, exist_ok=True)
-    columns = ["rank", "enrichment_model", "embedding_model", "R@1", "R@5",
-               "R@10", "MRR", "Hit@5", "difficult_R@1", "difficult_MRR",
-               "overall_score"]
+    columns = [
+        "rank",
+        "enrichment_model",
+        "embedding_model",
+        "R@1",
+        "R@5",
+        "R@10",
+        "MRR",
+        "Hit@5",
+        "difficult_R@1",
+        "difficult_MRR",
+        "overall_score",
+    ]
     with (output_dir / "best_combinations.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
@@ -650,8 +720,7 @@ def save_best_combinations(results: Dict[str, Any], output_dir: Path) -> None:
             writer.writerows(best.values())
 
 
-def save_group_metrics_csv(results: Dict[str, Any], output_path: Path,
-                           group: str) -> None:
+def save_group_metrics_csv(results: dict[str, Any], output_path: Path, group: str) -> None:
     """Save difficulty/category aggregate metrics (e.g. easy_mrr)."""
     matrix = _result_matrix(results)
     rows = []
@@ -659,37 +728,50 @@ def save_group_metrics_csv(results: Dict[str, Any], output_path: Path,
         for corpus, metrics in corpora.items():
             if not isinstance(metrics, dict):
                 continue
-            prefix = f"{group}_"
             if group == "category":
-                prefixes = sorted({
-                    key[:-4] for key in metrics
-                    if key.endswith("_mrr")
-                    and key[:-4] not in {"easy", "moderate", "difficult"}
-                })
+                prefixes = sorted(
+                    {
+                        key[:-4]
+                        for key in metrics
+                        if key.endswith("_mrr")
+                        and key[:-4] not in {"easy", "moderate", "difficult"}
+                    }
+                )
             else:
                 prefixes = ["easy", "moderate", "difficult"]
             for label in prefixes:
-                rows.append({
-                    "enrichment_model": corpus, "embedding_model": embedding,
-                    group: label,
-                    "queries": metrics.get(f"{label}_num_queries", 0),
-                    "R@1": metrics.get(f"{label}_recall_at_1", 0.0),
-                    "R@5": metrics.get(f"{label}_recall_at_5", 0.0),
-                    "R@10": metrics.get(f"{label}_recall_at_10", 0.0),
-                    "MRR": metrics.get(f"{label}_mrr", 0.0),
-                    "Hit@5": metrics.get(f"{label}_hit_rate_at_5", 0.0),
-                })
+                rows.append(
+                    {
+                        "enrichment_model": corpus,
+                        "embedding_model": embedding,
+                        group: label,
+                        "queries": metrics.get(f"{label}_num_queries", 0),
+                        "R@1": metrics.get(f"{label}_recall_at_1", 0.0),
+                        "R@5": metrics.get(f"{label}_recall_at_5", 0.0),
+                        "R@10": metrics.get(f"{label}_recall_at_10", 0.0),
+                        "MRR": metrics.get(f"{label}_mrr", 0.0),
+                        "Hit@5": metrics.get(f"{label}_hit_rate_at_5", 0.0),
+                    }
+                )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    columns = ["enrichment_model", "embedding_model", group, "queries",
-               "R@1", "R@5", "R@10", "MRR", "Hit@5"]
+    columns = [
+        "enrichment_model",
+        "embedding_model",
+        group,
+        "queries",
+        "R@1",
+        "R@5",
+        "R@10",
+        "MRR",
+        "Hit@5",
+    ]
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         writer.writerows(rows)
 
 
-def save_gain_csv(results: Dict[str, Any], output_path: Path,
-                  axis: str = "enrichment") -> None:
+def save_gain_csv(results: dict[str, Any], output_path: Path, axis: str = "enrichment") -> None:
     """Save enrichment or embedding gains against a reproducible baseline."""
     matrix = _result_matrix(results)
     rows = []
@@ -700,18 +782,24 @@ def save_gain_csv(results: Dict[str, Any], output_path: Path,
                 if corpus == "raw" or not isinstance(metrics, dict):
                     continue
                 for metric in ("recall_at_1", "recall_at_5", "recall_at_10", "mrr"):
-                    rows.append({
-                        "axis": axis, "embedding_model": embedding,
-                        "comparison": corpus, "metric": metric,
-                        "baseline": baseline.get(metric, 0.0),
-                        "value": metrics.get(metric, 0.0),
-                        "absolute_gain": metrics.get(metric, 0.0) - baseline.get(metric, 0.0),
-                        "relative_gain_percent": (
-                            (metrics.get(metric, 0.0) - baseline.get(metric, 0.0))
-                            / baseline.get(metric, 1.0) * 100
-                            if baseline.get(metric, 0.0) else 0.0
-                        ),
-                    })
+                    rows.append(
+                        {
+                            "axis": axis,
+                            "embedding_model": embedding,
+                            "comparison": corpus,
+                            "metric": metric,
+                            "baseline": baseline.get(metric, 0.0),
+                            "value": metrics.get(metric, 0.0),
+                            "absolute_gain": metrics.get(metric, 0.0) - baseline.get(metric, 0.0),
+                            "relative_gain_percent": (
+                                (metrics.get(metric, 0.0) - baseline.get(metric, 0.0))
+                                / baseline.get(metric, 1.0)
+                                * 100
+                                if baseline.get(metric, 0.0)
+                                else 0.0
+                            ),
+                        }
+                    )
     else:
         models = list(matrix)
         baseline_model = models[0] if models else ""
@@ -722,46 +810,79 @@ def save_gain_csv(results: Dict[str, Any], output_path: Path,
             for corpus, metrics in corpora.items():
                 base_metrics = baseline.get(corpus, {})
                 for metric in ("recall_at_1", "recall_at_5", "recall_at_10", "mrr"):
-                    rows.append({
-                        "axis": axis, "embedding_model": embedding,
-                        "comparison": corpus, "metric": metric,
-                        "baseline": base_metrics.get(metric, 0.0),
-                        "value": metrics.get(metric, 0.0),
-                        "absolute_gain": metrics.get(metric, 0.0) - base_metrics.get(metric, 0.0),
-                        "relative_gain_percent": (
-                            (metrics.get(metric, 0.0) - base_metrics.get(metric, 0.0))
-                            / base_metrics.get(metric, 1.0) * 100
-                            if base_metrics.get(metric, 0.0) else 0.0
-                        ),
-                    })
+                    rows.append(
+                        {
+                            "axis": axis,
+                            "embedding_model": embedding,
+                            "comparison": corpus,
+                            "metric": metric,
+                            "baseline": base_metrics.get(metric, 0.0),
+                            "value": metrics.get(metric, 0.0),
+                            "absolute_gain": metrics.get(metric, 0.0)
+                            - base_metrics.get(metric, 0.0),
+                            "relative_gain_percent": (
+                                (metrics.get(metric, 0.0) - base_metrics.get(metric, 0.0))
+                                / base_metrics.get(metric, 1.0)
+                                * 100
+                                if base_metrics.get(metric, 0.0)
+                                else 0.0
+                            ),
+                        }
+                    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    columns = ["axis", "embedding_model", "comparison", "metric",
-               "baseline", "value", "absolute_gain", "relative_gain_percent"]
+    columns = [
+        "axis",
+        "embedding_model",
+        "comparison",
+        "metric",
+        "baseline",
+        "value",
+        "absolute_gain",
+        "relative_gain_percent",
+    ]
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
         writer.writerows(rows)
 
 
-def save_best_tables(results: Dict[str, Any], output_path: Path) -> None:
+def save_best_tables(results: dict[str, Any], output_path: Path) -> None:
     """Write the best corpus per embedding and best embedding per corpus."""
     matrix = _result_matrix(results)
     rows = []
     for embedding, corpora in matrix.items():
-        valid = [(corpus, metrics) for corpus, metrics in corpora.items()
-                 if isinstance(metrics, dict) and "error" not in metrics]
+        valid = [
+            (corpus, metrics)
+            for corpus, metrics in corpora.items()
+            if isinstance(metrics, dict) and "error" not in metrics
+        ]
         if valid:
             corpus, metrics = max(valid, key=lambda item: weighted_overall_score(item[1]))
-            rows.append({"table": "best_corpus_per_embedding", "embedding_model": embedding,
-                         "corpus": corpus, "weighted_overall_score": weighted_overall_score(metrics)})
+            rows.append(
+                {
+                    "table": "best_corpus_per_embedding",
+                    "embedding_model": embedding,
+                    "corpus": corpus,
+                    "weighted_overall_score": weighted_overall_score(metrics),
+                }
+            )
     corpus_names = sorted({corpus for corpora in matrix.values() for corpus in corpora})
     for corpus in corpus_names:
-        valid = [(embedding, corpora[corpus]) for embedding, corpora in matrix.items()
-                 if corpus in corpora and isinstance(corpora[corpus], dict)]
+        valid = [
+            (embedding, corpora[corpus])
+            for embedding, corpora in matrix.items()
+            if corpus in corpora and isinstance(corpora[corpus], dict)
+        ]
         if valid:
             embedding, metrics = max(valid, key=lambda item: weighted_overall_score(item[1]))
-            rows.append({"table": "best_embedding_per_corpus", "embedding_model": embedding,
-                         "corpus": corpus, "weighted_overall_score": weighted_overall_score(metrics)})
+            rows.append(
+                {
+                    "table": "best_embedding_per_corpus",
+                    "embedding_model": embedding,
+                    "corpus": corpus,
+                    "weighted_overall_score": weighted_overall_score(metrics),
+                }
+            )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     columns = ["table", "embedding_model", "corpus", "weighted_overall_score"]
     with output_path.open("w", newline="", encoding="utf-8") as handle:
@@ -770,7 +891,7 @@ def save_best_tables(results: Dict[str, Any], output_path: Path) -> None:
         writer.writerows(rows)
 
 
-def generate_visualizations(results: Dict[str, Any], output_dir: Path) -> List[Path]:
+def generate_visualizations(results: dict[str, Any], output_dir: Path) -> list[Path]:
     """Generate small comparison plots when matplotlib is installed."""
     try:
         import matplotlib.pyplot as plt
@@ -808,8 +929,7 @@ def generate_visualizations(results: Dict[str, Any], output_dir: Path) -> List[P
     embeddings = list(matrix)
     if corpora and embeddings:
         for title, metric, filename in combinations:
-            values = [[matrix[e].get(c, {}).get(metric, 0.0) for e in embeddings]
-                      for c in corpora]
+            values = [[matrix[e].get(c, {}).get(metric, 0.0) for e in embeddings] for c in corpora]
             figure, axis = plt.subplots(figsize=(max(6, len(embeddings) * 1.2), 5))
             image = axis.imshow(values, aspect="auto", vmin=0, vmax=1)
             axis.set_xticks(range(len(embeddings)), embeddings, rotation=45, ha="right")
@@ -824,12 +944,21 @@ def generate_visualizations(results: Dict[str, Any], output_dir: Path) -> List[P
     return paths
 
 
-def save_per_query_results(results: Dict[str, Any], output_path: Path):
+def save_per_query_results(results: dict[str, Any], output_path: Path):
     """Save ranked evidence for every query and corpus to CSV."""
     columns = [
-        "embedding_model", "corpus", "query_id", "difficulty", "category", "query",
-        "relevant_functions", "top_1_function", "top_5_functions",
-        "top_10_functions", "first_relevant_rank", "reciprocal_rank"
+        "embedding_model",
+        "corpus",
+        "query_id",
+        "difficulty",
+        "category",
+        "query",
+        "relevant_functions",
+        "top_1_function",
+        "top_5_functions",
+        "top_10_functions",
+        "first_relevant_rank",
+        "reciprocal_rank",
     ]
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="", encoding="utf-8") as csv_file:
@@ -837,28 +966,32 @@ def save_per_query_results(results: Dict[str, Any], output_path: Path):
         writer.writeheader()
         matrix = _result_matrix(results)
         for embedding, corpora in matrix.items():
-          for corpus_name, metrics in corpora.items():
-            for item in metrics.get("per_query_results", []):
-                writer.writerow({
-                    "embedding_model": embedding if embedding != "default" else "",
-                    "corpus": corpus_name,
-                    "query_id": item["query_id"],
-                    "difficulty": item["difficulty"],
-                    "category": item["category"],
-                    "query": item["query"],
-                    "relevant_functions": json.dumps(item["relevant_functions"]),
-                    "top_1_function": item["top_1_function"],
-                    "top_5_functions": json.dumps(item["top_5_functions"]),
-                    "top_10_functions": json.dumps(item["top_10_functions"]),
-                    "first_relevant_rank": item["first_relevant_rank"] or "",
-                    "reciprocal_rank": item["reciprocal_rank"],
-                })
+            for corpus_name, metrics in corpora.items():
+                for item in metrics.get("per_query_results", []):
+                    writer.writerow(
+                        {
+                            "embedding_model": embedding if embedding != "default" else "",
+                            "corpus": corpus_name,
+                            "query_id": item["query_id"],
+                            "difficulty": item["difficulty"],
+                            "category": item["category"],
+                            "query": item["query"],
+                            "relevant_functions": json.dumps(item["relevant_functions"]),
+                            "top_1_function": item["top_1_function"],
+                            "top_5_functions": json.dumps(item["top_5_functions"]),
+                            "top_10_functions": json.dumps(item["top_10_functions"]),
+                            "first_relevant_rank": item["first_relevant_rank"] or "",
+                            "reciprocal_rank": item["reciprocal_rank"],
+                        }
+                    )
 
 
-def create_benchmark_from_json_files(output_dir: Path,
-                                   num_queries: int = 20,
-                                   difficulty_distribution: Tuple[float, float, float] = (0.25, 0.35, 0.40),
-                                   seed: Optional[int] = 42) -> List[Dict[str, Any]]:
+def create_benchmark_from_json_files(
+    output_dir: Path,
+    num_queries: int = 20,
+    difficulty_distribution: tuple[float, float, float] = (0.25, 0.35, 0.40),
+    seed: int | None = 42,
+) -> list[dict[str, Any]]:
     """
     Create benchmark queries by analyzing JSON files with difficulty levels.
 
@@ -879,7 +1012,7 @@ def create_benchmark_from_json_files(output_dir: Path,
     # Process base.json
     base_path = output_dir / "base.json"
     if base_path.exists():
-        with open(base_path, 'r') as f:
+        with open(base_path) as f:
             data = json.load(f)
             for file_data in data.get("files", []):
                 all_functions.extend(file_data.get("functions", []))
@@ -887,7 +1020,7 @@ def create_benchmark_from_json_files(output_dir: Path,
     # Process enhanced JSONs (optional - could use for variety)
     for json_file in output_dir.glob("enhanced_*.json"):
         try:
-            with open(json_file, 'r') as f:
+            with open(json_file) as f:
                 data = json.load(f)
                 for file_data in data.get("files", []):
                     all_functions.extend(file_data.get("functions", []))
@@ -902,13 +1035,14 @@ def create_benchmark_from_json_files(output_dir: Path,
 
     # Create benchmark generator and generate queries
     from .benchmark_generator import create_benchmark_from_json_files as benchmark_create
+
     queries = benchmark_create(output_dir, num_queries, difficulty_distribution, seed)
 
     logger.info(f"Generated {len(queries)} benchmark queries")
     return queries
 
 
-def save_benchmark_queries(queries: List[Dict[str, Any]], output_path: Path):
+def save_benchmark_queries(queries: list[dict[str, Any]], output_path: Path):
     """
     Save benchmark queries to JSON file.
 
@@ -917,12 +1051,12 @@ def save_benchmark_queries(queries: List[Dict[str, Any]], output_path: Path):
         output_path: Path to save the benchmark
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, 'w') as f:
+    with open(output_path, "w") as f:
         json.dump(queries, f, indent=2)
     logger.info(f"Saved {len(queries)} benchmark queries to {output_path}")
 
 
-def load_benchmark_queries(input_path: Path) -> List[Dict[str, Any]]:
+def load_benchmark_queries(input_path: Path) -> list[dict[str, Any]]:
     """
     Load benchmark queries from JSON file.
 
@@ -936,14 +1070,15 @@ def load_benchmark_queries(input_path: Path) -> List[Dict[str, Any]]:
         logger.warning(f"Benchmark file not found: {input_path}")
         return []
 
-    with open(input_path, 'r') as f:
+    with open(input_path) as f:
         queries = json.load(f)
     logger.info(f"Loaded {len(queries)} benchmark queries from {input_path}")
     return queries
 
 
-def calculate_improvement_over_baseline(raw_metrics: Dict[str, Any],
-                                      enriched_metrics: Dict[str, Any]) -> Dict[str, Any]:
+def calculate_improvement_over_baseline(
+    raw_metrics: dict[str, Any], enriched_metrics: dict[str, Any]
+) -> dict[str, Any]:
     """
     Calculate improvement of enriched model over raw baseline.
 
@@ -958,10 +1093,19 @@ def calculate_improvement_over_baseline(raw_metrics: Dict[str, Any],
 
     # Metrics to compare
     metric_keys = [
-        "recall_at_1", "recall_at_3", "recall_at_5", "recall_at_10",
-        "precision_at_1", "precision_at_3", "precision_at_5", "precision_at_10",
-        "hit_rate_at_1", "hit_rate_at_3", "hit_rate_at_5", "hit_rate_at_10",
-        "mrr"
+        "recall_at_1",
+        "recall_at_3",
+        "recall_at_5",
+        "recall_at_10",
+        "precision_at_1",
+        "precision_at_3",
+        "precision_at_5",
+        "precision_at_10",
+        "hit_rate_at_1",
+        "hit_rate_at_3",
+        "hit_rate_at_5",
+        "hit_rate_at_10",
+        "mrr",
     ]
 
     for key in metric_keys:
@@ -973,16 +1117,20 @@ def calculate_improvement_over_baseline(raw_metrics: Dict[str, Any],
             print(f"WARNING: raw_val for {key} is not a number: {raw_val} (type: {type(raw_val)})")
             raw_val = 0.0
         if not isinstance(enriched_val, (int, float)):
-            print(f"WARNING: enriched_val for {key} is not a number: {enriched_val} (type: {type(enriched_val)})")
+            print(
+                f"WARNING: enriched_val for {key} is not a number: {enriched_val} (type: {type(enriched_val)})"
+            )
             enriched_val = 0.0
 
         absolute_improvement = enriched_val - raw_val
         if raw_val != 0:
             try:
-                relative_improvement = (absolute_improvement / raw_val * 100)
+                relative_improvement = absolute_improvement / raw_val * 100
             except Exception as e:
                 print(f"ERROR calculating relative improvement for {key}: {e}")
-                print(f"  absolute_improvement: {absolute_improvement} (type: {type(absolute_improvement)})")
+                print(
+                    f"  absolute_improvement: {absolute_improvement} (type: {type(absolute_improvement)})"
+                )
                 print(f"  raw_val: {raw_val} (type: {type(raw_val)})")
                 relative_improvement = 0.0
         else:
@@ -994,8 +1142,9 @@ def calculate_improvement_over_baseline(raw_metrics: Dict[str, Any],
     return improvements
 
 
-def rank_enrichment_models(corpus_results: Dict[str, Dict[str, Any]],
-                         metric: str = "recall_at_5") -> List[Tuple[str, float]]:
+def rank_enrichment_models(
+    corpus_results: dict[str, dict[str, Any]], metric: str = "recall_at_5"
+) -> list[tuple[str, float]]:
     """
     Rank enrichment models by a specific metric (excluding raw baseline).
 
@@ -1008,15 +1157,14 @@ def rank_enrichment_models(corpus_results: Dict[str, Dict[str, Any]],
     """
     # Filter out raw baseline
     enrichment_results = {
-        name: results for name, results in corpus_results.items()
+        name: results
+        for name, results in corpus_results.items()
         if name != "raw" and isinstance(results, dict) and metric in results
     }
 
     # Sort by metric value descending
     sorted_models = sorted(
-        enrichment_results.items(),
-        key=lambda x: x[1].get(metric, 0.0),
-        reverse=True
+        enrichment_results.items(), key=lambda x: x[1].get(metric, 0.0), reverse=True
     )
 
     return [(name, results[metric]) for name, results in sorted_models]
@@ -1030,10 +1178,12 @@ if __name__ == "__main__":
     dummy_queries = [
         {
             "query": "What does the puzzle solver function do?",
-            "relevant_functions": ["benchmark_tests/benchmark_tests.h::Test::BenchMark::Puzzle::Puzzle::25"],
+            "relevant_functions": [
+                "benchmark_tests/benchmark_tests.h::Test::BenchMark::Puzzle::Puzzle::25"
+            ],
             "function_name": "Puzzle",
             "qualified_name": "Test::BenchMark::Puzzle::Puzzle",
-            "function_id": "benchmark_tests/benchmark_tests.h::Test::BenchMark::Puzzle::Puzzle::25"
+            "function_id": "benchmark_tests/benchmark_tests.h::Test::BenchMark::Puzzle::Puzzle::25",
         }
     ]
 

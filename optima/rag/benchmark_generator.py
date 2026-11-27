@@ -12,9 +12,10 @@ import json
 import logging
 import random
 import re
-from collections import Counter, defaultdict, deque
+from collections import defaultdict, deque
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +24,47 @@ DEFAULT_DIFFICULTY_DISTRIBUTION = (0.25, 0.35, 0.40)
 DIFFICULTIES = ("easy", "moderate", "difficult")
 _WORD_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9_]*\b")
 _STOP_WORDS = {
-    "the", "a", "an", "and", "or", "to", "of", "for", "with", "from",
-    "into", "that", "this", "when", "then", "is", "are", "be", "by", "on",
-    "in", "as", "it", "its", "their", "they", "does", "do", "used", "use",
-    "function", "method", "code", "component", "value", "values", "data",
-    "none", "unknown", "true", "false",
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "to",
+    "of",
+    "for",
+    "with",
+    "from",
+    "into",
+    "that",
+    "this",
+    "when",
+    "then",
+    "is",
+    "are",
+    "be",
+    "by",
+    "on",
+    "in",
+    "as",
+    "it",
+    "its",
+    "their",
+    "they",
+    "does",
+    "do",
+    "used",
+    "use",
+    "function",
+    "method",
+    "code",
+    "component",
+    "value",
+    "values",
+    "data",
+    "none",
+    "unknown",
+    "true",
+    "false",
 }
 
 
@@ -84,7 +121,7 @@ class BenchmarkQueryGenerator:
         },
     }
 
-    def __init__(self, seed: Optional[int] = 42):
+    def __init__(self, seed: int | None = 42):
         self.seed = seed
         self.random = random.Random(seed)
         # Preserve the historical attribute while avoiding global RNG changes.
@@ -100,7 +137,7 @@ class BenchmarkQueryGenerator:
         return re.sub(r"\s+", " ", re.sub(r"[^A-Za-z0-9_ -]", " ", str(text))).strip()
 
     @staticmethod
-    def _tokens(text: str) -> Set[str]:
+    def _tokens(text: str) -> set[str]:
         return {token.lower() for token in _WORD_RE.findall(text or "")}
 
     def _calculate_lexical_overlap(self, text1: str, text2: str) -> float:
@@ -108,7 +145,7 @@ class BenchmarkQueryGenerator:
         return len(left & right) / len(left | right) if left and right else 0.0
 
     @staticmethod
-    def _function_id(func: Dict[str, Any]) -> str:
+    def _function_id(func: dict[str, Any]) -> str:
         return str(func.get("id") or func.get("qualified_name") or func.get("name") or "")
 
     @staticmethod
@@ -117,9 +154,9 @@ class BenchmarkQueryGenerator:
             return str(value.get("name") or value.get("qualified_name") or "")
         return str(value or "")
 
-    def _get_relationships(self, func: Dict[str, Any]) -> Dict[str, List[str]]:
+    def _get_relationships(self, func: dict[str, Any]) -> dict[str, list[str]]:
         """Return graph evidence while accepting old string and new dict shapes."""
-        result: Dict[str, List[str]] = defaultdict(list)
+        result: dict[str, list[str]] = defaultdict(list)
         for key in ("calls", "called_by", "dependencies"):
             values = func.get(key, []) or []
             for value in values:
@@ -129,9 +166,9 @@ class BenchmarkQueryGenerator:
                     result[key].append(str(value))
         return result
 
-    def _all_identifiers(self, func: Dict[str, Any]) -> Set[str]:
+    def _all_identifiers(self, func: dict[str, Any]) -> set[str]:
         """Identifiers which must never appear in a generated query."""
-        identifiers: Set[str] = set()
+        identifiers: set[str] = set()
         for key in ("id", "name", "qualified_name", "mangled_name"):
             value = str(func.get(key) or "")
             if value:
@@ -140,22 +177,24 @@ class BenchmarkQueryGenerator:
                 # function names intact.  Banning "get" or "handle" would
                 # reject valid semantic descriptions without hiding a symbol.
                 identifiers.update(
-                    part.lower() for part in re.split(r"[:/\\<>(),\s]+", value)
-                    if len(part) > 2
+                    part.lower() for part in re.split(r"[:/\\<>(),\s]+", value) if len(part) > 2
                 )
         for parameter in func.get("parameters", []) or []:
             if isinstance(parameter, dict):
                 for key in ("name", "type"):
                     value = str(parameter.get(key) or "")
                     identifiers.add(value.lower())
-                    identifiers.update(part.lower() for part in re.split(r"[:./\\<>(),\s]+", value) if len(part) > 2)
+                    identifiers.update(
+                        part.lower()
+                        for part in re.split(r"[:./\\<>(),\s]+", value)
+                        if len(part) > 2
+                    )
         for key in ("calls", "called_by", "dependencies"):
             for value in func.get(key, []) or []:
                 value = self._relationship_name(value)
                 identifiers.add(value.lower())
                 identifiers.update(
-                    part.lower() for part in re.split(r"[:./\\<>(),\s]+", value)
-                    if len(part) > 2
+                    part.lower() for part in re.split(r"[:./\\<>(),\s]+", value) if len(part) > 2
                 )
         # Enrichment often mentions symbols in prose or dependency lists.
         # Remove identifier-shaped tokens before using that prose as evidence.
@@ -172,13 +211,20 @@ class BenchmarkQueryGenerator:
                                 identifiers.add(token.lower())
         return {item for item in identifiers if item and item not in _STOP_WORDS}
 
-    def _evidence_text(self, func: Dict[str, Any]) -> str:
+    def _evidence_text(self, func: dict[str, Any]) -> str:
         """Collect semantic evidence from enrichment and source, not identifiers."""
         enrichment = func.get("enrichment") or {}
-        parts: List[str] = []
+        parts: list[str] = []
         for key in (
-            "purpose", "summary", "behavior", "algorithm", "inputs", "outputs",
-            "side_effects", "concepts", "keywords",
+            "purpose",
+            "summary",
+            "behavior",
+            "algorithm",
+            "inputs",
+            "outputs",
+            "side_effects",
+            "concepts",
+            "keywords",
         ):
             value = enrichment.get(key, "")
             if isinstance(value, (list, tuple)):
@@ -193,15 +239,15 @@ class BenchmarkQueryGenerator:
 
     def _semantic_subject(
         self,
-        func: Dict[str, Any],
+        func: dict[str, Any],
         fallback: str = "the observed operation",
-        banned_identifiers: Optional[Set[str]] = None,
+        banned_identifiers: set[str] | None = None,
     ) -> str:
         """Make a short, indirect description and remove target identifiers."""
         enrichment = func.get("enrichment") or {}
         # Prefer one concise explanatory field. Combining every enrichment
         # field creates keyword soup and leaks implementation vocabulary.
-        preferred: List[str] = []
+        preferred: list[str] = []
         for key in ("summary", "purpose", "behavior", "algorithm"):
             value = enrichment.get(key, "")
             if isinstance(value, str) and len(value.split()) >= 4:
@@ -236,16 +282,58 @@ class BenchmarkQueryGenerator:
             text = self._clean_text(" ".join(control_words + structural))
         identifiers = self._all_identifiers(func) | set(banned_identifiers or ())
         metadata_words = {
-            "purpose", "behavior", "summary", "algorithm", "inputs", "outputs",
-            "side", "effects", "dependencies", "unknown", "object", "function",
-            "implementation", "result", "code", "named", "called", "returns",
-            "given", "various", "necessary", "components", "including",
-            "first", "then", "finally", "based",
+            "purpose",
+            "behavior",
+            "summary",
+            "algorithm",
+            "inputs",
+            "outputs",
+            "side",
+            "effects",
+            "dependencies",
+            "unknown",
+            "object",
+            "function",
+            "implementation",
+            "result",
+            "code",
+            "named",
+            "called",
+            "returns",
+            "given",
+            "various",
+            "necessary",
+            "components",
+            "including",
+            "first",
+            "then",
+            "finally",
+            "based",
         }
         source_noise = {
-            "static", "const", "auto", "return", "true", "false", "std", "cout",
-            "cerr", "endl", "size", "string", "vector", "int", "void", "bool",
-            "char", "long", "unsigned", "signed", "include", "public", "private",
+            "static",
+            "const",
+            "auto",
+            "return",
+            "true",
+            "false",
+            "std",
+            "cout",
+            "cerr",
+            "endl",
+            "size",
+            "string",
+            "vector",
+            "int",
+            "void",
+            "bool",
+            "char",
+            "long",
+            "unsigned",
+            "signed",
+            "include",
+            "public",
+            "private",
         }
         words = []
         for word in _WORD_RE.findall(text):
@@ -269,14 +357,17 @@ class BenchmarkQueryGenerator:
         # long enrichment quotations (which would make the query too direct).
         return " ".join(words[:10])
 
-    def _get_function_signature(self, func: Dict[str, Any]) -> str:
+    def _get_function_signature(self, func: dict[str, Any]) -> str:
         """Compatibility helper; signatures are not used in generated queries."""
         params = [p.get("name", "") for p in func.get("parameters", []) if isinstance(p, dict)]
         return f"{func.get('name', '')}({', '.join(p for p in params if p)})".rstrip("()")
 
     def _is_query_safe(
-        self, query: str, func: Dict[str, Any], evidence_functions: Optional[Sequence[Dict[str, Any]]] = None
-    ) -> Tuple[bool, Dict[str, Any]]:
+        self,
+        query: str,
+        func: dict[str, Any],
+        evidence_functions: Sequence[dict[str, Any]] | None = None,
+    ) -> tuple[bool, dict[str, Any]]:
         """Reject identifier leakage and copied enrichment phrases."""
         targets = list(evidence_functions or [func])
         query_tokens = self._tokens(query)
@@ -300,7 +391,7 @@ class BenchmarkQueryGenerator:
         safe = not leaked and overlap < 0.42 and len(self._tokens(query)) >= 5
         return safe, details
 
-    def _generate_query_from_template(self, template: str, func: Dict[str, Any]) -> Optional[str]:
+    def _generate_query_from_template(self, template: str, func: dict[str, Any]) -> str | None:
         """Compatibility wrapper that substitutes semantic evidence only."""
         subject = self._semantic_subject(func)
         values = {
@@ -323,8 +414,8 @@ class BenchmarkQueryGenerator:
             except (KeyError, IndexError, ValueError):
                 return None
 
-    def _index_functions(self, functions: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-        index: Dict[str, Dict[str, Any]] = {}
+    def _index_functions(self, functions: Sequence[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        index: dict[str, dict[str, Any]] = {}
         for func in functions:
             fid = self._function_id(func)
             if fid:
@@ -336,8 +427,8 @@ class BenchmarkQueryGenerator:
         return index
 
     def _related_functions(
-        self, func: Dict[str, Any], functions: Sequence[Dict[str, Any]], max_depth: int = 2
-    ) -> List[Dict[str, Any]]:
+        self, func: dict[str, Any], functions: Sequence[dict[str, Any]], max_depth: int = 2
+    ) -> list[dict[str, Any]]:
         """Resolve a bounded call/dependency graph for multi-hop evidence."""
         index = self._index_functions(functions)
         result, seen = [], {self._function_id(func)}
@@ -361,85 +452,256 @@ class BenchmarkQueryGenerator:
         return result
 
     def _category_candidates(
-        self, func: Dict[str, Any], functions: Sequence[Dict[str, Any]], difficulty: str
-    ) -> List[Tuple[str, str, List[Dict[str, Any]], int]]:
+        self, func: dict[str, Any], functions: Sequence[dict[str, Any]], difficulty: str
+    ) -> list[tuple[str, str, list[dict[str, Any]], int]]:
         """Return (category, query, evidence, graph depth) candidates."""
         banned = set().union(*(self._all_identifiers(item) for item in functions))
         primary = self._semantic_subject(func, banned_identifiers=banned)
         related = self._related_functions(func, functions, 2)
-        candidates: List[Tuple[str, str, List[Dict[str, Any]], int]] = []
+        candidates: list[tuple[str, str, list[dict[str, Any]], int]] = []
         source = str(func.get("source_code") or func.get("source") or "")
         enrichment = func.get("enrichment") or {}
         if not primary:
             return candidates
 
-        def add(category: str, text: str, evidence: Sequence[Dict[str, Any]], depth: int = 0):
+        def add(category: str, text: str, evidence: Sequence[dict[str, Any]], depth: int = 0):
             if text and not text.endswith("{"):
                 candidates.append((category, text, list(evidence), depth))
 
         if difficulty == "easy":
             add("functionality", f"Which part of the code is responsible for {primary}?", [func])
-            add("input_output", f"What processing produces the observed result after {primary}?", [func])
+            add(
+                "input_output",
+                f"What processing produces the observed result after {primary}?",
+                [func],
+            )
             add("functionality", f"Where should I start looking to understand {primary}?", [func])
-            add("functionality", f"What implementation area explains the behaviour described as {primary}?", [func])
-            add("input_output", f"How does the system turn {primary} into an outcome used elsewhere?", [func])
-            add("input_output", f"What transformation is associated with {primary} before a result is returned?", [func])
+            add(
+                "functionality",
+                f"What implementation area explains the behaviour described as {primary}?",
+                [func],
+            )
+            add(
+                "input_output",
+                f"How does the system turn {primary} into an outcome used elsewhere?",
+                [func],
+            )
+            add(
+                "input_output",
+                f"What transformation is associated with {primary} before a result is returned?",
+                [func],
+            )
         elif difficulty == "moderate":
-            add("data_flow", f"How does {primary} become the resulting state across the code?", [func])
-            add("data_flow", f"Where does information from {primary} go before it is consumed?", [func])
-            add("data_flow", f"What intermediate representation connects {primary} with the eventual result?", [func])
-            add("data_flow", f"What should I trace to see where the information from {primary} is consumed?", [func])
-            add("data_flow", f"How is the outcome of {primary} carried into later processing?", [func])
+            add(
+                "data_flow",
+                f"How does {primary} become the resulting state across the code?",
+                [func],
+            )
+            add(
+                "data_flow",
+                f"Where does information from {primary} go before it is consumed?",
+                [func],
+            )
+            add(
+                "data_flow",
+                f"What intermediate representation connects {primary} with the eventual result?",
+                [func],
+            )
+            add(
+                "data_flow",
+                f"What should I trace to see where the information from {primary} is consumed?",
+                [func],
+            )
+            add(
+                "data_flow",
+                f"How is the outcome of {primary} carried into later processing?",
+                [func],
+            )
             if related:
-                add("dependencies", f"What supporting operation enables {primary} to complete?", [func, related[0]])
-                add("dependencies", f"What lower-level capability does {primary} rely on?", [func, related[0]])
-                add("dependencies", f"Which prerequisite relationship should I inspect around {primary}?", [func, related[0]])
-                add("dependencies", f"What does {primary} need from the surrounding implementation?", [func, related[0]])
+                add(
+                    "dependencies",
+                    f"What supporting operation enables {primary} to complete?",
+                    [func, related[0]],
+                )
+                add(
+                    "dependencies",
+                    f"What lower-level capability does {primary} rely on?",
+                    [func, related[0]],
+                )
+                add(
+                    "dependencies",
+                    f"Which prerequisite relationship should I inspect around {primary}?",
+                    [func, related[0]],
+                )
+                add(
+                    "dependencies",
+                    f"What does {primary} need from the surrounding implementation?",
+                    [func, related[0]],
+                )
             if re.search(r"\b(if|switch|case|else|while|for)\b", source):
-                add("control_flow", f"What condition changes the execution path for {primary}?", [func])
-                add("control_flow", f"Where should I inspect the decision that changes what happens after {primary}?", [func])
-                add("control_flow", f"What branch determines the next step after {primary}?", [func])
+                add(
+                    "control_flow",
+                    f"What condition changes the execution path for {primary}?",
+                    [func],
+                )
+                add(
+                    "control_flow",
+                    f"Where should I inspect the decision that changes what happens after {primary}?",
+                    [func],
+                )
+                add(
+                    "control_flow", f"What branch determines the next step after {primary}?", [func]
+                )
         else:
             if related:
                 other = related[0]
                 other_subject = self._semantic_subject(other, "the downstream operation", banned)
-                add("cross_function", f"How do the components responsible for {primary} and {other_subject} cooperate?", [func, other], 1)
-                add("cross_function", f"Where should I trace the handoff between {primary} and {other_subject}?", [func, other], 1)
-                add("cross_function", f"What interaction connects {primary} with {other_subject} during execution?", [func, other], 1)
-                add("cross_function", f"Which implementation boundary should I follow between {primary} and {other_subject}?", [func, other], 1)
-                add("reasoning", f"Why does the implementation need both {primary} and {other_subject} to achieve its result?", [func, other], 1)
-                add("reasoning", f"If {primary} changes, what relationship with {other_subject} would need review?", [func, other], 1)
-                add("reasoning", f"What design responsibility is shared by {primary} and {other_subject}?", [func, other], 1)
-                add("reasoning", f"What would break if the relationship between {primary} and {other_subject} changed?", [func, other], 1)
+                add(
+                    "cross_function",
+                    f"How do the components responsible for {primary} and {other_subject} cooperate?",
+                    [func, other],
+                    1,
+                )
+                add(
+                    "cross_function",
+                    f"Where should I trace the handoff between {primary} and {other_subject}?",
+                    [func, other],
+                    1,
+                )
+                add(
+                    "cross_function",
+                    f"What interaction connects {primary} with {other_subject} during execution?",
+                    [func, other],
+                    1,
+                )
+                add(
+                    "cross_function",
+                    f"Which implementation boundary should I follow between {primary} and {other_subject}?",
+                    [func, other],
+                    1,
+                )
+                add(
+                    "reasoning",
+                    f"Why does the implementation need both {primary} and {other_subject} to achieve its result?",
+                    [func, other],
+                    1,
+                )
+                add(
+                    "reasoning",
+                    f"If {primary} changes, what relationship with {other_subject} would need review?",
+                    [func, other],
+                    1,
+                )
+                add(
+                    "reasoning",
+                    f"What design responsibility is shared by {primary} and {other_subject}?",
+                    [func, other],
+                    1,
+                )
+                add(
+                    "reasoning",
+                    f"What would break if the relationship between {primary} and {other_subject} changed?",
+                    [func, other],
+                    1,
+                )
                 if len(related) > 1:
                     final = self._semantic_subject(related[1], "the final result", banned)
-                    add("multi_hop", f"How does {primary} reach {final} through an intermediate processing step?", [func, related[0], related[1]], 2)
-                    add("multi_hop", f"Which intermediate transformation links {primary} with {final} across the call path?", [func, related[0], related[1]], 2)
-                    add("multi_hop", f"What should I trace from {primary} through an intermediate step before it reaches {final}?", [func, related[0], related[1]], 2)
-                    add("multi_hop", f"Which sequence carries {primary} through an intermediate operation toward {final}?", [func, related[0], related[1]], 2)
-            if re.search(r"(?<![=!<>])=(?!=)|\b(update|reset|restore|initialize|clear|set)\w*\b", source, re.I):
-                add("state_transition", f"How does the code move from {primary} to a resulting state while preserving context?", [func])
-                add("state_transition", f"Where should I investigate how {primary} prepares or changes state before the next stage?", [func])
-                add("state_transition", f"What state is established while the system performs {primary}?", [func])
-                add("state_transition", f"If state from an earlier operation persists, what should I trace around {primary}?", [func])
-                add("state_transition", f"What part of the implementation controls the transition associated with {primary}?", [func])
-                add("state_transition", f"How is the result of {primary} reflected in the next state?", [func])
-            if (
-                re.search(r"\b(throw|try|catch|error|fail|invalid|assert)\w*\b", source, re.I)
-                or any(
-                    re.search(r"\b(error|fail|invalid|exception|reject)\b", str(enrichment.get(key, "")), re.I)
-                    for key in ("behavior", "purpose", "summary", "side_effects")
-                )
+                    add(
+                        "multi_hop",
+                        f"How does {primary} reach {final} through an intermediate processing step?",
+                        [func, related[0], related[1]],
+                        2,
+                    )
+                    add(
+                        "multi_hop",
+                        f"Which intermediate transformation links {primary} with {final} across the call path?",
+                        [func, related[0], related[1]],
+                        2,
+                    )
+                    add(
+                        "multi_hop",
+                        f"What should I trace from {primary} through an intermediate step before it reaches {final}?",
+                        [func, related[0], related[1]],
+                        2,
+                    )
+                    add(
+                        "multi_hop",
+                        f"Which sequence carries {primary} through an intermediate operation toward {final}?",
+                        [func, related[0], related[1]],
+                        2,
+                    )
+            if re.search(
+                r"(?<![=!<>])=(?!=)|\b(update|reset|restore|initialize|clear|set)\w*\b",
+                source,
+                re.I,
             ):
-                add("error_handling", f"What happens when the path for {primary} cannot complete, and where is that handled?", [func])
-                add("error_handling", f"Where should I look if {primary} produces an unexpected or unusable result?", [func])
-                add("error_handling", f"What protects the system when the processing described by {primary} goes wrong?", [func])
-                add("error_handling", f"If this operation fails under unusual input, what implementation area should I inspect?", [func])
-                add("error_handling", f"Where would I investigate an incomplete path or invalid result related to {primary}?", [func])
+                add(
+                    "state_transition",
+                    f"How does the code move from {primary} to a resulting state while preserving context?",
+                    [func],
+                )
+                add(
+                    "state_transition",
+                    f"Where should I investigate how {primary} prepares or changes state before the next stage?",
+                    [func],
+                )
+                add(
+                    "state_transition",
+                    f"What state is established while the system performs {primary}?",
+                    [func],
+                )
+                add(
+                    "state_transition",
+                    f"If state from an earlier operation persists, what should I trace around {primary}?",
+                    [func],
+                )
+                add(
+                    "state_transition",
+                    f"What part of the implementation controls the transition associated with {primary}?",
+                    [func],
+                )
+                add(
+                    "state_transition",
+                    f"How is the result of {primary} reflected in the next state?",
+                    [func],
+                )
+            if re.search(
+                r"\b(throw|try|catch|error|fail|invalid|assert)\w*\b", source, re.I
+            ) or any(
+                re.search(
+                    r"\b(error|fail|invalid|exception|reject)\b", str(enrichment.get(key, "")), re.I
+                )
+                for key in ("behavior", "purpose", "summary", "side_effects")
+            ):
+                add(
+                    "error_handling",
+                    f"What happens when the path for {primary} cannot complete, and where is that handled?",
+                    [func],
+                )
+                add(
+                    "error_handling",
+                    f"Where should I look if {primary} produces an unexpected or unusable result?",
+                    [func],
+                )
+                add(
+                    "error_handling",
+                    f"What protects the system when the processing described by {primary} goes wrong?",
+                    [func],
+                )
+                add(
+                    "error_handling",
+                    "If this operation fails under unusual input, what implementation area should I inspect?",
+                    [func],
+                )
+                add(
+                    "error_handling",
+                    f"Where would I investigate an incomplete path or invalid result related to {primary}?",
+                    [func],
+                )
         return candidates
 
     @staticmethod
-    def _allocate_counts(total: int, distribution: Sequence[float]) -> List[int]:
+    def _allocate_counts(total: int, distribution: Sequence[float]) -> list[int]:
         if total <= 0:
             return [0, 0, 0]
         weights = list(distribution[:3]) + [0.0] * (3 - len(distribution))
@@ -447,16 +709,18 @@ class BenchmarkQueryGenerator:
             weights = list(DEFAULT_DIFFICULTY_DISTRIBUTION)
         raw = [total * max(0.0, weight) / sum(weights) for weight in weights[:3]]
         counts = [int(value) for value in raw]
-        for index in sorted(range(3), key=lambda i: raw[i] - counts[i], reverse=True)[: total - sum(counts)]:
+        for index in sorted(range(3), key=lambda i: raw[i] - counts[i], reverse=True)[
+            : total - sum(counts)
+        ]:
             counts[index] += 1
         return counts
 
     def generate_benchmark_queries(
         self,
-        functions: List[Dict[str, Any]],
+        functions: list[dict[str, Any]],
         num_queries: int = 20,
-        difficulty_distribution: Tuple[float, float, float] = DEFAULT_DIFFICULTY_DISTRIBUTION,
-    ) -> List[Dict[str, Any]]:
+        difficulty_distribution: tuple[float, float, float] = DEFAULT_DIFFICULTY_DISTRIBUTION,
+    ) -> list[dict[str, Any]]:
         """Generate quality-filtered queries with a 25/35/40 default split."""
         if not functions or num_queries <= 0:
             return []
@@ -464,8 +728,8 @@ class BenchmarkQueryGenerator:
         candidates = [f for f in functions if self._function_id(f)]
         if not candidates:
             return []
-        generated: List[Dict[str, Any]] = []
-        seen: Set[str] = set()
+        generated: list[dict[str, Any]] = []
+        seen: set[str] = set()
         # Cycling functions makes small fixtures useful while preserving variety.
         order = list(range(len(candidates)))
         self.random.shuffle(order)
@@ -487,30 +751,38 @@ class BenchmarkQueryGenerator:
                     if not safe or quality < 0.45:
                         continue
                     ids = [self._function_id(item) for item in evidence if self._function_id(item)]
-                    generated.append({
-                        "query": query,
-                        "relevant_functions": list(dict.fromkeys(ids)),
-                        "function_name": func.get("name", ""),  # legacy metadata only
-                        "qualified_name": func.get("qualified_name", ""),
-                        "function_id": self._function_id(func),
-                        "difficulty": difficulty,
-                        "category": category,
-                        "query_type": category,
-                        "reasoning_depth": max(1, depth + (2 if difficulty == "difficult" else 1)),
-                        "directness_score": round(
-                            self._directness_score(query, validation, difficulty), 4
-                        ),
-                        "query_quality_score": round(quality, 4),
-                        "reasoning_required": "high" if difficulty == "difficult" else ("medium" if difficulty == "moderate" else "low"),
-                        "evidence": {
-                            "source": bool(func.get("source_code") or func.get("source")),
-                            "enrichment": bool(func.get("enrichment")),
-                            "graph_depth": depth,
-                            "relationship_count": len(self._related_functions(func, candidates, 2)),
-                        },
-                        "validation": validation,
-                        "is_safe": True,
-                    })
+                    generated.append(
+                        {
+                            "query": query,
+                            "relevant_functions": list(dict.fromkeys(ids)),
+                            "function_name": func.get("name", ""),  # legacy metadata only
+                            "qualified_name": func.get("qualified_name", ""),
+                            "function_id": self._function_id(func),
+                            "difficulty": difficulty,
+                            "category": category,
+                            "query_type": category,
+                            "reasoning_depth": max(
+                                1, depth + (2 if difficulty == "difficult" else 1)
+                            ),
+                            "directness_score": round(
+                                self._directness_score(query, validation, difficulty), 4
+                            ),
+                            "query_quality_score": round(quality, 4),
+                            "reasoning_required": "high"
+                            if difficulty == "difficult"
+                            else ("medium" if difficulty == "moderate" else "low"),
+                            "evidence": {
+                                "source": bool(func.get("source_code") or func.get("source")),
+                                "enrichment": bool(func.get("enrichment")),
+                                "graph_depth": depth,
+                                "relationship_count": len(
+                                    self._related_functions(func, candidates, 2)
+                                ),
+                            },
+                            "validation": validation,
+                            "is_safe": True,
+                        }
+                    )
                     seen.add(normalized)
                     made += 1
                     if made >= target:
@@ -523,20 +795,28 @@ class BenchmarkQueryGenerator:
         return generated[:num_queries]
 
     def _score_query(
-        self, query: str, evidence: Sequence[Dict[str, Any]], difficulty: str,
-        graph_depth: int, validation: Dict[str, Any],
+        self,
+        query: str,
+        evidence: Sequence[dict[str, Any]],
+        difficulty: str,
+        graph_depth: int,
+        validation: dict[str, Any],
     ) -> float:
         words = self._tokens(query)
-        evidence_words = set().union(*(self._tokens(self._evidence_text(item)) for item in evidence))
+        evidence_words = set().union(
+            *(self._tokens(self._evidence_text(item)) for item in evidence)
+        )
         grounding = min(1.0, len(words & evidence_words) / 4.0)
         indirectness = 1.0 if not validation.get("contains_target_identifier") else 0.0
         specificity = min(1.0, len(words) / 12.0)
         graph = min(1.0, graph_depth / 2.0) if difficulty == "difficult" else 0.5
-        return max(0.0, min(1.0, 0.35 * grounding + 0.25 * indirectness + 0.2 * specificity + 0.2 * graph))
+        return max(
+            0.0, min(1.0, 0.35 * grounding + 0.25 * indirectness + 0.2 * specificity + 0.2 * graph)
+        )
 
     @staticmethod
     def _directness_score(
-        query: str, validation: Dict[str, Any], difficulty: str = "moderate"
+        query: str, validation: dict[str, Any], difficulty: str = "moderate"
     ) -> float:
         target = {"easy": 0.68, "moderate": 0.46, "difficult": 0.24}.get(difficulty, 0.46)
         return max(
@@ -544,16 +824,26 @@ class BenchmarkQueryGenerator:
             min(1.0, target - validation.get("lexical_overlap", 0.0) * 0.25),
         )
 
-    def _get_function_by_id(self, func_id: str, functions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    def _get_function_by_id(
+        self, func_id: str, functions: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
         return next((f for f in functions if self._function_id(f) == func_id), None)
 
-    def _get_function_by_name(self, name: str, functions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        return next((f for f in functions if f.get("name") == name or f.get("qualified_name") == name), None)
+    def _get_function_by_name(
+        self, name: str, functions: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        return next(
+            (f for f in functions if f.get("name") == name or f.get("qualified_name") == name), None
+        )
 
     def _generate_queries_for_difficulty(
-        self, functions: List[Dict[str, Any]], count: int, templates: Dict[str, List[str]],
-        difficulty: str, used_function_indices: set,
-    ) -> List[Dict[str, Any]]:
+        self,
+        functions: list[dict[str, Any]],
+        count: int,
+        templates: dict[str, list[str]],
+        difficulty: str,
+        used_function_indices: set,
+    ) -> list[dict[str, Any]]:
         """Compatibility entry point; generation now uses evidence-aware candidates."""
         distribution = {
             "easy": (1.0, 0.0, 0.0),
@@ -563,7 +853,9 @@ class BenchmarkQueryGenerator:
         result = self.generate_benchmark_queries(functions, count, distribution)
         return result
 
-    def _generate_generic_queries(self, functions: List[Dict[str, Any]], count: int, used_function_indices: set) -> List[Dict[str, Any]]:
+    def _generate_generic_queries(
+        self, functions: list[dict[str, Any]], count: int, used_function_indices: set
+    ) -> list[dict[str, Any]]:
         return self.generate_benchmark_queries(functions, count, (1.0, 0.0, 0.0))
 
     def _infer_category(self, query: str) -> str:
@@ -590,12 +882,13 @@ class BenchmarkQueryGenerator:
 
 
 def create_benchmark_from_json_files(
-    output_dir: Path, num_queries: int = 20,
-    difficulty_distribution: Tuple[float, float, float] = DEFAULT_DIFFICULTY_DISTRIBUTION,
-    seed: Optional[int] = 42,
-) -> List[Dict[str, Any]]:
+    output_dir: Path,
+    num_queries: int = 20,
+    difficulty_distribution: tuple[float, float, float] = DEFAULT_DIFFICULTY_DISTRIBUTION,
+    seed: int | None = 42,
+) -> list[dict[str, Any]]:
     """Load base/enriched analysis files and generate an evidence-backed set."""
-    merged: Dict[str, Dict[str, Any]] = {}
+    merged: dict[str, dict[str, Any]] = {}
     paths = [output_dir / "base.json", *sorted(output_dir.glob("enhanced_*.json"))]
     for path in paths:
         if not path.exists():
@@ -604,7 +897,12 @@ def create_benchmark_from_json_files(
             data = json.loads(path.read_text())
             for file_data in data.get("files", []):
                 for function in file_data.get("functions", []):
-                    fid = str(function.get("id") or function.get("qualified_name") or function.get("name") or "")
+                    fid = str(
+                        function.get("id")
+                        or function.get("qualified_name")
+                        or function.get("name")
+                        or ""
+                    )
                     if not fid:
                         continue
                     current = merged.get(fid, {})
@@ -621,24 +919,26 @@ def create_benchmark_from_json_files(
     )
 
 
-def save_benchmark_queries(queries: List[Dict[str, Any]], output_path: Path):
+def save_benchmark_queries(queries: list[dict[str, Any]], output_path: Path):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(queries, indent=2))
     logger.info("Saved %d benchmark queries to %s", len(queries), output_path)
 
 
-def load_benchmark_queries(input_path: Path) -> List[Dict[str, Any]]:
+def load_benchmark_queries(input_path: Path) -> list[dict[str, Any]]:
     if not input_path.exists():
         logger.warning("Benchmark file not found: %s", input_path)
         return []
     return json.loads(input_path.read_text())
 
 
-def validate_benchmark_queries(queries: List[Dict[str, Any]], functions: List[Dict[str, Any]]) -> Dict[str, Any]:
+def validate_benchmark_queries(
+    queries: list[dict[str, Any]], functions: list[dict[str, Any]]
+) -> dict[str, Any]:
     """Validate schema, safety, uniqueness, grounding, and difficulty balance."""
     generator = BenchmarkQueryGenerator(seed=0)
     valid_ids = {generator._function_id(func) for func in functions}
-    report: Dict[str, Any] = {
+    report: dict[str, Any] = {
         "total_queries": len(queries),
         "safe_queries": 0,
         "unsafe_queries": 0,
@@ -657,7 +957,7 @@ def validate_benchmark_queries(queries: List[Dict[str, Any]], functions: List[Di
         "average_query_quality_score": 0.0,
         "validation_details": [],
     }
-    seen: Set[str] = set()
+    seen: set[str] = set()
     overlap_total = depth_total = directness_total = quality_total = 0.0
     for item in queries:
         text = str(item.get("query", "")).strip()
@@ -683,7 +983,14 @@ def validate_benchmark_queries(queries: List[Dict[str, Any]], functions: List[Di
         target = evidence[0] if evidence else {}
         safe, details = generator._is_query_safe(text, target, evidence)
         overlap = details["lexical_overlap"]
-        quality = float(item.get("query_quality_score", generator._score_query(text, evidence, level, int(item.get("reasoning_depth", 1)), details)))
+        quality = float(
+            item.get(
+                "query_quality_score",
+                generator._score_query(
+                    text, evidence, level, int(item.get("reasoning_depth", 1)), details
+                ),
+            )
+        )
         if safe:
             report["safe_queries"] += 1
         else:
@@ -696,17 +1003,21 @@ def validate_benchmark_queries(queries: List[Dict[str, Any]], functions: List[Di
             report["low_quality_queries"] += 1
         overlap_total += overlap
         depth_total += float(item.get("reasoning_depth", 0) or 0)
-        directness_total += float(item.get("directness_score", generator._directness_score(text, details)) or 0)
+        directness_total += float(
+            item.get("directness_score", generator._directness_score(text, details)) or 0
+        )
         quality_total += quality
-        report["validation_details"].append({
-            "query_id": item.get("query_id", "unknown"),
-            "query": text[:160],
-            "is_safe": safe,
-            "lexical_overlap": overlap,
-            "identifier_leak": details.get("contains_target_identifier", False),
-            "quality_score": quality,
-            "relevant_functions_count": len(ids),
-        })
+        report["validation_details"].append(
+            {
+                "query_id": item.get("query_id", "unknown"),
+                "query": text[:160],
+                "is_safe": safe,
+                "lexical_overlap": overlap,
+                "identifier_leak": details.get("contains_target_identifier", False),
+                "quality_score": quality,
+                "relevant_functions_count": len(ids),
+            }
+        )
     if queries:
         count = len(queries)
         report["average_lexical_overlap"] = overlap_total / count

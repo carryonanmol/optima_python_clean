@@ -26,17 +26,30 @@ from __future__ import annotations
 
 import itertools
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any
 
-from .config import (GraphConfig, PipelineConfig, RepresentationConfig, RerankConfig,
-                     RetrievalConfig)
+from .config import PipelineConfig
 
-ALL_GROUPS = ("pipelines", "enrichment", "representations", "hybrid", "graph", "rerank",
-              "embedding", "grid", "improved", "attribution", "coupled")
+ALL_GROUPS = (
+    "pipelines",
+    "enrichment",
+    "representations",
+    "hybrid",
+    "graph",
+    "rerank",
+    "embedding",
+    "grid",
+    "improved",
+    "attribution",
+    "coupled",
+)
 # Groups run by a suite that does not name its groups explicitly (grid is opt-in: it is large).
-DEFAULT_GROUPS = tuple(group for group in ALL_GROUPS if group not in ("grid", "improved", "attribution", "coupled"))
+DEFAULT_GROUPS = tuple(
+    group for group in ALL_GROUPS if group not in ("grid", "improved", "attribution", "coupled")
+)
 REPS = ("raw", "semantic", "compiler")
 
 
@@ -45,20 +58,20 @@ class RunSpec:
     group: str
     label: str
     config: PipelineConfig
-    reference: Optional[str] = None
-    tags: Dict[str, Any] = field(default_factory=dict)
+    reference: str | None = None
+    tags: dict[str, Any] = field(default_factory=dict)
 
 
 def slug(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._+-]+", "-", str(value)).strip("-").lower()
 
 
-def discover_enriched(directory: Path) -> Dict[str, Path]:
+def discover_enriched(directory: Path) -> dict[str, Path]:
     """``enhanced_<slug>.json`` files in a directory, keyed by slug."""
-    return {p.stem[len("enhanced_"):]: p for p in sorted(Path(directory).glob("enhanced_*.json"))}
+    return {p.stem[len("enhanced_") :]: p for p in sorted(Path(directory).glob("enhanced_*.json"))}
 
 
-def enriched_base_mismatch(path: Path, base_sha256: str) -> Optional[str]:
+def enriched_base_mismatch(path: Path, base_sha256: str) -> str | None:
     """Why an enriched file does not belong to this ``base.json`` (None when it does).
 
     The enrichment run records the SHA-256 of the ``base.json`` it was produced from.  A file
@@ -67,65 +80,116 @@ def enriched_base_mismatch(path: Path, base_sha256: str) -> Optional[str]:
     Files that do not record a hash are accepted (nothing to check).
     """
     import json
+
     try:
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             experiment = (json.load(handle) or {}).get("experiment") or {}
     except (OSError, ValueError) as exc:
         return f"unreadable: {type(exc).__name__}: {exc}"
     recorded = experiment.get("base_sha256")
     if recorded and recorded != base_sha256:
-        return (f"enriched from a different base.json (recorded sha {str(recorded)[:12]}, "
-                f"dataset {experiment.get('dataset')!r}; expected {base_sha256[:12]})")
+        return (
+            f"enriched from a different base.json (recorded sha {str(recorded)[:12]}, "
+            f"dataset {experiment.get('dataset')!r}; expected {base_sha256[:12]})"
+        )
     return None
 
 
 class PlanBuilder:
-    def __init__(self, base_json: str, enriched: Mapping[str, str], primary_enrichment: str,
-                 embedding_models: Sequence[str], primary_embedding: str,
-                 rerankers: Sequence[str] = (), prefixes: Optional[Mapping[str, Mapping[str, str]]] = None,
-                 top_k: int = 10, rerank_pool: int = 30,
-                 routing_profiles: Optional[Mapping[str, Mapping[str, Any]]] = None):
+    def __init__(
+        self,
+        base_json: str,
+        enriched: Mapping[str, str],
+        primary_enrichment: str,
+        embedding_models: Sequence[str],
+        primary_embedding: str,
+        rerankers: Sequence[str] = (),
+        prefixes: Mapping[str, Mapping[str, str]] | None = None,
+        top_k: int = 10,
+        rerank_pool: int = 30,
+        routing_profiles: Mapping[str, Mapping[str, Any]] | None = None,
+    ):
         if primary_enrichment not in enriched:
-            raise ValueError(f"primary enrichment {primary_enrichment!r} not among {sorted(enriched)}")
+            raise ValueError(
+                f"primary enrichment {primary_enrichment!r} not among {sorted(enriched)}"
+            )
         if primary_embedding not in embedding_models:
             raise ValueError("primary_embedding must be one of embedding_models")
         self.base_json, self.enriched = str(base_json), {k: str(v) for k, v in enriched.items()}
-        self.primary_enr, self.embeddings, self.primary_emb = primary_enrichment, list(embedding_models), primary_embedding
+        self.primary_enr, self.embeddings, self.primary_emb = (
+            primary_enrichment,
+            list(embedding_models),
+            primary_embedding,
+        )
         self.rerankers, self.prefixes = list(rerankers), dict(prefixes or {})
         self.top_k, self.rerank_pool = top_k, rerank_pool
         self.routing_profiles = {k: dict(v) for k, v in (routing_profiles or {}).items()}
-        self.specs: List[RunSpec] = []
+        self.specs: list[RunSpec] = []
         self._labels: set = set()
 
     # ------------------------------------------------------------- helpers
-    def _config(self, name: str, enr: Optional[str], emb: str, *, reps: Sequence[str],
-                dense: bool = True, bm25: bool = False, exact: bool = False,
-                graph: Optional[Mapping[str, Any]] = None, rerank: Optional[Mapping[str, Any]] = None,
-                retrieval_extra: Optional[Mapping[str, Any]] = None, tags: Sequence[str] = (),
-                routing: bool = False, representation_extra: Optional[Mapping[str, Any]] = None) -> PipelineConfig:
+    def _config(
+        self,
+        name: str,
+        enr: str | None,
+        emb: str,
+        *,
+        reps: Sequence[str],
+        dense: bool = True,
+        bm25: bool = False,
+        exact: bool = False,
+        graph: Mapping[str, Any] | None = None,
+        rerank: Mapping[str, Any] | None = None,
+        retrieval_extra: Mapping[str, Any] | None = None,
+        tags: Sequence[str] = (),
+        routing: bool = False,
+        representation_extra: Mapping[str, Any] | None = None,
+    ) -> PipelineConfig:
         prefix = self.prefixes.get(emb, {})
-        retrieval = dict(representations=tuple(reps), dense=dense, bm25=bm25, exact_match=exact,
-                         query_prefix=prefix.get("query", ""), document_prefix=prefix.get("document", ""))
+        retrieval = dict(
+            representations=tuple(reps),
+            dense=dense,
+            bm25=bm25,
+            exact_match=exact,
+            query_prefix=prefix.get("query", ""),
+            document_prefix=prefix.get("document", ""),
+        )
         retrieval.update(retrieval_extra or {})
-        relations = (graph or {}).get("relations", ("callers", "callees")) if (graph or {}).get("enabled") else ()
-        needs_enr = bool(enr) and ("semantic" in reps or "coupled" in reps
-                                   or (rerank and "semantic" in rerank.get("text_representations", ()))
-                                   or "enriched_dependencies" in relations)
-        return PipelineConfig.from_dict({
-            "name": name, "base_json": self.base_json,
-            "enriched_json": self.enriched[enr] if needs_enr else None,
-            "enrichment_model": enr if needs_enr else "none", "embedding_model": emb,
-            "top_k": self.top_k,
-            "retrieval": retrieval,
-            **({"representation": dict(representation_extra)} if representation_extra else {}),
-            "graph": dict(graph or {"enabled": False}),
-            "rerank": dict(rerank or {"enabled": False}),
-            "routing": ({"enabled": True, "profiles": self.routing_profiles} if routing else {"enabled": False}),
-            "tags": list(tags),
-        })
+        relations = (
+            (graph or {}).get("relations", ("callers", "callees"))
+            if (graph or {}).get("enabled")
+            else ()
+        )
+        needs_enr = bool(enr) and (
+            "semantic" in reps
+            or "coupled" in reps
+            or (rerank and "semantic" in rerank.get("text_representations", ()))
+            or "enriched_dependencies" in relations
+        )
+        return PipelineConfig.from_dict(
+            {
+                "name": name,
+                "base_json": self.base_json,
+                "enriched_json": self.enriched[enr] if needs_enr else None,
+                "enrichment_model": enr if needs_enr else "none",
+                "embedding_model": emb,
+                "top_k": self.top_k,
+                "retrieval": retrieval,
+                **({"representation": dict(representation_extra)} if representation_extra else {}),
+                "graph": dict(graph or {"enabled": False}),
+                "rerank": dict(rerank or {"enabled": False}),
+                "routing": (
+                    {"enabled": True, "profiles": self.routing_profiles}
+                    if routing
+                    else {"enabled": False}
+                ),
+                "tags": list(tags),
+            }
+        )
 
-    def _add(self, group: str, variant: str, config: PipelineConfig, reference: Optional[str],
-             **tags: Any) -> str:
+    def _add(
+        self, group: str, variant: str, config: PipelineConfig, reference: str | None, **tags: Any
+    ) -> str:
         suffix = ""
         if config.retrieval.dense or config.rerank.enabled:
             suffix += f"|emb={slug(config.embedding_model)}"
@@ -142,120 +206,301 @@ class PlanBuilder:
     def pipelines(self) -> None:
         for emb in self.embeddings:
             enr = self.primary_enr
-            ref = self._add("pipelines", f"baseline_rag",
-                            self._config("baseline_rag", None, emb, reps=("raw",)), None)
-            self._add("pipelines", f"semantic_enrichment_rag",
-                      self._config("semantic_enrichment_rag", enr, emb, reps=("semantic",)), ref)
-            self._add("pipelines", f"compiler_hybrid_rag",
-                      self._config("compiler_hybrid_rag", enr, emb, reps=REPS, bm25=True, exact=True,
-                                   graph={"enabled": True}), ref)
+            ref = self._add(
+                "pipelines",
+                "baseline_rag",
+                self._config("baseline_rag", None, emb, reps=("raw",)),
+                None,
+            )
+            self._add(
+                "pipelines",
+                "semantic_enrichment_rag",
+                self._config("semantic_enrichment_rag", enr, emb, reps=("semantic",)),
+                ref,
+            )
+            self._add(
+                "pipelines",
+                "compiler_hybrid_rag",
+                self._config(
+                    "compiler_hybrid_rag",
+                    enr,
+                    emb,
+                    reps=REPS,
+                    bm25=True,
+                    exact=True,
+                    graph={"enabled": True},
+                ),
+                ref,
+            )
             for rr in self.rerankers:
-                self._add("pipelines", f"compiler_hybrid_rag+rerank({rr})",
-                          self._config("compiler_hybrid_rag", enr, emb, reps=REPS, bm25=True, exact=True,
-                                       graph={"enabled": True},
-                                       rerank={"enabled": True, "model": rr, "pool_size": self.rerank_pool}), ref)
+                self._add(
+                    "pipelines",
+                    f"compiler_hybrid_rag+rerank({rr})",
+                    self._config(
+                        "compiler_hybrid_rag",
+                        enr,
+                        emb,
+                        reps=REPS,
+                        bm25=True,
+                        exact=True,
+                        graph={"enabled": True},
+                        rerank={"enabled": True, "model": rr, "pool_size": self.rerank_pool},
+                    ),
+                    ref,
+                )
 
     def enrichment(self) -> None:
         emb = self.primary_emb
-        ref = self._add("enrichment", f"raw_baseline",
-                        self._config("baseline_rag", None, emb, reps=("raw",)), None)
+        ref = self._add(
+            "enrichment",
+            "raw_baseline",
+            self._config("baseline_rag", None, emb, reps=("raw",)),
+            None,
+        )
         for enr in sorted(self.enriched):
-            self._add("enrichment", f"semantic_dense",
-                      self._config("semantic_enrichment_rag", enr, emb, reps=("semantic",)), ref)
-            self._add("enrichment", f"semantic_hybrid",
-                      self._config("semantic_enrichment_rag", enr, emb, reps=("semantic",), bm25=True), ref)
-            self._add("enrichment", f"raw+semantic_dense",
-                      self._config("ablation", enr, emb, reps=("raw", "semantic")), ref)
-            self._add("enrichment", f"compiler_hybrid_rag",
-                      self._config("compiler_hybrid_rag", enr, emb, reps=REPS, bm25=True, exact=True,
-                                   graph={"enabled": True}), ref)
+            self._add(
+                "enrichment",
+                "semantic_dense",
+                self._config("semantic_enrichment_rag", enr, emb, reps=("semantic",)),
+                ref,
+            )
+            self._add(
+                "enrichment",
+                "semantic_hybrid",
+                self._config("semantic_enrichment_rag", enr, emb, reps=("semantic",), bm25=True),
+                ref,
+            )
+            self._add(
+                "enrichment",
+                "raw+semantic_dense",
+                self._config("ablation", enr, emb, reps=("raw", "semantic")),
+                ref,
+            )
+            self._add(
+                "enrichment",
+                "compiler_hybrid_rag",
+                self._config(
+                    "compiler_hybrid_rag",
+                    enr,
+                    emb,
+                    reps=REPS,
+                    bm25=True,
+                    exact=True,
+                    graph={"enabled": True},
+                ),
+                ref,
+            )
 
     def representations(self) -> None:
         emb, enr = self.primary_emb, self.primary_enr
-        modes = {"dense": dict(dense=True, bm25=False), "bm25": dict(dense=False, bm25=True),
-                 "dense+bm25": dict(dense=True, bm25=True)}
+        modes = {
+            "dense": dict(dense=True, bm25=False),
+            "bm25": dict(dense=False, bm25=True),
+            "dense+bm25": dict(dense=True, bm25=True),
+        }
         for mode, flags in modes.items():
             ref = None
             for size in (1, 2, 3):
                 for combo in itertools.combinations(REPS, size):
-                    label = self._add("representations", f"{mode}:{'+'.join(combo)}",
-                                      self._config("ablation", enr, emb, reps=combo, **flags),
-                                      ref, mode=mode, representations="+".join(combo))
+                    label = self._add(
+                        "representations",
+                        f"{mode}:{'+'.join(combo)}",
+                        self._config("ablation", enr, emb, reps=combo, **flags),
+                        ref,
+                        mode=mode,
+                        representations="+".join(combo),
+                    )
                     if combo == ("raw",):
                         ref = label
 
     def hybrid(self) -> None:
         emb, enr = self.primary_emb, self.primary_enr
         for rep in ("raw", "semantic", "compiler"):
-            ref = self._add("hybrid", f"{rep}:dense", self._config("ablation", enr, emb, reps=(rep,)), None)
-            self._add("hybrid", f"{rep}:bm25", self._config("ablation", enr, emb, reps=(rep,), dense=False, bm25=True), ref)
-            self._add("hybrid", f"{rep}:dense+bm25(rrf)", self._config("ablation", enr, emb, reps=(rep,), bm25=True), ref)
-            self._add("hybrid", f"{rep}:dense+bm25+exact",
-                      self._config("ablation", enr, emb, reps=(rep,), bm25=True, exact=True), ref)
+            ref = self._add(
+                "hybrid", f"{rep}:dense", self._config("ablation", enr, emb, reps=(rep,)), None
+            )
+            self._add(
+                "hybrid",
+                f"{rep}:bm25",
+                self._config("ablation", enr, emb, reps=(rep,), dense=False, bm25=True),
+                ref,
+            )
+            self._add(
+                "hybrid",
+                f"{rep}:dense+bm25(rrf)",
+                self._config("ablation", enr, emb, reps=(rep,), bm25=True),
+                ref,
+            )
+            self._add(
+                "hybrid",
+                f"{rep}:dense+bm25+exact",
+                self._config("ablation", enr, emb, reps=(rep,), bm25=True, exact=True),
+                ref,
+            )
             for k in (10, 100):
-                self._add("hybrid", f"{rep}:dense+bm25(rrf_k={k})",
-                          self._config("ablation", enr, emb, reps=(rep,), bm25=True,
-                                       retrieval_extra={"rrf_k": k}), ref)
+                self._add(
+                    "hybrid",
+                    f"{rep}:dense+bm25(rrf_k={k})",
+                    self._config(
+                        "ablation", enr, emb, reps=(rep,), bm25=True, retrieval_extra={"rrf_k": k}
+                    ),
+                    ref,
+                )
 
     def graph(self) -> None:
         emb, enr = self.primary_emb, self.primary_enr
 
         def hyb(graph, variant, ref, **kw):
-            return self._add("graph", f"{variant}",
-                             self._config("compiler_hybrid_rag", enr, emb, reps=REPS, bm25=True, exact=True,
-                                          graph=graph, **kw), ref)
+            return self._add(
+                "graph",
+                f"{variant}",
+                self._config(
+                    "compiler_hybrid_rag",
+                    enr,
+                    emb,
+                    reps=REPS,
+                    bm25=True,
+                    exact=True,
+                    graph=graph,
+                    **kw,
+                ),
+                ref,
+            )
+
         ref = hyb({"enabled": False}, "no_graph", None)
         hyb({"enabled": True, "relations": ["callees"]}, "callees_d1", ref)
         hyb({"enabled": True, "relations": ["callers"]}, "callers_d1", ref)
         hyb({"enabled": True, "relations": ["callers", "callees"]}, "calls_d1", ref)
         hyb({"enabled": True, "relations": ["callers", "callees"], "max_depth": 2}, "calls_d2", ref)
         hyb({"enabled": True, "relations": ["dependencies"]}, "dependencies_d1", ref)
-        hyb({"enabled": True, "relations": ["enriched_dependencies"]}, "enriched_dependencies_d1", ref)
-        hyb({"enabled": True, "relations": ["callers", "callees", "dependencies", "enriched_dependencies"]},
-            "combined_d1", ref)
-        hyb({"enabled": True, "relations": ["callers", "callees", "dependencies", "enriched_dependencies"],
-             "max_depth": 2}, "combined_d2", ref)
+        hyb(
+            {"enabled": True, "relations": ["enriched_dependencies"]},
+            "enriched_dependencies_d1",
+            ref,
+        )
+        hyb(
+            {
+                "enabled": True,
+                "relations": ["callers", "callees", "dependencies", "enriched_dependencies"],
+            },
+            "combined_d1",
+            ref,
+        )
+        hyb(
+            {
+                "enabled": True,
+                "relations": ["callers", "callees", "dependencies", "enriched_dependencies"],
+                "max_depth": 2,
+            },
+            "combined_d2",
+            ref,
+        )
         for weight in (0.1, 0.25, 1.0):
-            hyb({"enabled": True, "relations": ["callers", "callees"], "graph_weight": weight},
-                f"calls_d1_weight{weight}", ref)
+            hyb(
+                {"enabled": True, "relations": ["callers", "callees"], "graph_weight": weight},
+                f"calls_d1_weight{weight}",
+                ref,
+            )
         # Graph expansion on the simplest retriever, isolating it from multi-index fusion.
-        simple_ref = self._add("graph", f"raw_dense:no_graph",
-                               self._config("ablation", None, emb, reps=("raw",)), None)
-        self._add("graph", f"raw_dense:calls_d1",
-                  self._config("ablation", None, emb, reps=("raw",), graph={"enabled": True}), simple_ref)
+        simple_ref = self._add(
+            "graph", "raw_dense:no_graph", self._config("ablation", None, emb, reps=("raw",)), None
+        )
+        self._add(
+            "graph",
+            "raw_dense:calls_d1",
+            self._config("ablation", None, emb, reps=("raw",), graph={"enabled": True}),
+            simple_ref,
+        )
 
     def rerank(self) -> None:
         emb, enr = self.primary_emb, self.primary_enr
         base_kwargs = dict(reps=REPS, bm25=True, exact=True)
         for rr in self.rerankers:
-            ref = self._add("rerank", f"initial",
-                            self._config("compiler_hybrid_rag", enr, emb, **base_kwargs), None)
+            ref = self._add(
+                "rerank",
+                "initial",
+                self._config("compiler_hybrid_rag", enr, emb, **base_kwargs),
+                None,
+            )
             spec = {"enabled": True, "model": rr, "pool_size": self.rerank_pool}
-            self._add("rerank", f"graph_only", self._config(
-                "compiler_hybrid_rag", enr, emb, graph={"enabled": True}, **base_kwargs), ref)
-            self._add("rerank", f"rerank({rr})", self._config(
-                "compiler_hybrid_rag", enr, emb, rerank=spec, **base_kwargs), ref)
-            self._add("rerank", f"graph+rerank({rr})", self._config(
-                "compiler_hybrid_rag", enr, emb, graph={"enabled": True}, rerank=spec, **base_kwargs), ref)
-            self._add("rerank", f"rerank({rr},raw+semantic)", self._config(
-                "compiler_hybrid_rag", enr, emb,
-                rerank=dict(spec, text_representations=["raw", "semantic"]), **base_kwargs), ref)
+            self._add(
+                "rerank",
+                "graph_only",
+                self._config(
+                    "compiler_hybrid_rag", enr, emb, graph={"enabled": True}, **base_kwargs
+                ),
+                ref,
+            )
+            self._add(
+                "rerank",
+                f"rerank({rr})",
+                self._config("compiler_hybrid_rag", enr, emb, rerank=spec, **base_kwargs),
+                ref,
+            )
+            self._add(
+                "rerank",
+                f"graph+rerank({rr})",
+                self._config(
+                    "compiler_hybrid_rag",
+                    enr,
+                    emb,
+                    graph={"enabled": True},
+                    rerank=spec,
+                    **base_kwargs,
+                ),
+                ref,
+            )
+            self._add(
+                "rerank",
+                f"rerank({rr},raw+semantic)",
+                self._config(
+                    "compiler_hybrid_rag",
+                    enr,
+                    emb,
+                    rerank=dict(spec, text_representations=["raw", "semantic"]),
+                    **base_kwargs,
+                ),
+                ref,
+            )
             # Reranking the weakest retriever shows whether rerank helps when recall@pool is low.
-            r0 = self._add("rerank", f"raw_dense:initial",
-                           self._config("ablation", None, emb, reps=("raw",)), None)
-            self._add("rerank", f"raw_dense:rerank({rr})", self._config(
-                "ablation", None, emb, reps=("raw",), rerank=spec), r0)
+            r0 = self._add(
+                "rerank",
+                "raw_dense:initial",
+                self._config("ablation", None, emb, reps=("raw",)),
+                None,
+            )
+            self._add(
+                "rerank",
+                f"raw_dense:rerank({rr})",
+                self._config("ablation", None, emb, reps=("raw",), rerank=spec),
+                r0,
+            )
 
     def embedding(self) -> None:
         enr = self.primary_enr
         ref = None
         for emb in self.embeddings:
-            label = self._add("embedding", f"compiler_hybrid_rag",
-                              self._config("compiler_hybrid_rag", enr, emb, reps=REPS, bm25=True,
-                                           exact=True, graph={"enabled": True}), ref)
+            label = self._add(
+                "embedding",
+                "compiler_hybrid_rag",
+                self._config(
+                    "compiler_hybrid_rag",
+                    enr,
+                    emb,
+                    reps=REPS,
+                    bm25=True,
+                    exact=True,
+                    graph={"enabled": True},
+                ),
+                ref,
+            )
             ref = ref or label
-            self._add("embedding", f"baseline_rag",
-                      self._config("baseline_rag", None, emb, reps=("raw",)), None)
+            self._add(
+                "embedding",
+                "baseline_rag",
+                self._config("baseline_rag", None, emb, reps=("raw",)),
+                None,
+            )
 
     def grid(self) -> None:
         """Fully crossed enrichment x embedding grid with matched no-enrichment counterparts.
@@ -266,58 +511,171 @@ class PlanBuilder:
         ``tags['counterpart']`` so the enrichment effect inside a pipeline is a matched ablation.
         """
         for emb in self.embeddings:
-            ref = self._add("grid", "raw_baseline",
-                            self._config("baseline_rag", None, emb, reps=("raw",)), None)
-            self._add("grid", "raw_hybrid",
-                      self._config("ablation", None, emb, reps=("raw",), bm25=True), ref)
-            self._add("grid", "raw+compiler_hybrid_rag",
-                      self._config("ablation", None, emb, reps=("raw", "compiler"), bm25=True,
-                                   exact=True, graph={"enabled": True}), ref)
+            ref = self._add(
+                "grid", "raw_baseline", self._config("baseline_rag", None, emb, reps=("raw",)), None
+            )
+            self._add(
+                "grid",
+                "raw_hybrid",
+                self._config("ablation", None, emb, reps=("raw",), bm25=True),
+                ref,
+            )
+            self._add(
+                "grid",
+                "raw+compiler_hybrid_rag",
+                self._config(
+                    "ablation",
+                    None,
+                    emb,
+                    reps=("raw", "compiler"),
+                    bm25=True,
+                    exact=True,
+                    graph={"enabled": True},
+                ),
+                ref,
+            )
             for enr in sorted(self.enriched):
-                self._add("grid", "semantic_dense",
-                          self._config("semantic_enrichment_rag", enr, emb, reps=("semantic",)),
-                          ref, counterpart="raw_baseline")
-                self._add("grid", "semantic_hybrid",
-                          self._config("semantic_enrichment_rag", enr, emb, reps=("semantic",),
-                                       bm25=True), ref, counterpart="raw_hybrid")
-                self._add("grid", "compiler_hybrid_rag",
-                          self._config("compiler_hybrid_rag", enr, emb, reps=REPS, bm25=True,
-                                       exact=True, graph={"enabled": True}), ref,
-                          counterpart="raw+compiler_hybrid_rag")
+                self._add(
+                    "grid",
+                    "semantic_dense",
+                    self._config("semantic_enrichment_rag", enr, emb, reps=("semantic",)),
+                    ref,
+                    counterpart="raw_baseline",
+                )
+                self._add(
+                    "grid",
+                    "semantic_hybrid",
+                    self._config(
+                        "semantic_enrichment_rag", enr, emb, reps=("semantic",), bm25=True
+                    ),
+                    ref,
+                    counterpart="raw_hybrid",
+                )
+                self._add(
+                    "grid",
+                    "compiler_hybrid_rag",
+                    self._config(
+                        "compiler_hybrid_rag",
+                        enr,
+                        emb,
+                        reps=REPS,
+                        bm25=True,
+                        exact=True,
+                        graph={"enabled": True},
+                    ),
+                    ref,
+                    counterpart="raw+compiler_hybrid_rag",
+                )
 
     def improved(self) -> None:
         """Routed compiler stack + matched no-enrichment counterpart, per embedding (and enrichment) model."""
         if not self.routing_profiles:
             raise ValueError("group 'improved' needs routing_profiles in the suite spec")
         for emb in self.embeddings:
-            ref = self._add("improved", "raw_baseline", self._config("baseline_rag", None, emb, reps=("raw",)), None)
-            self._add("improved", "raw+compiler_hybrid_routed",
-                      self._config("ablation", None, emb, reps=("raw", "compiler"), bm25=True, exact=True,
-                                   graph={"enabled": True}, routing=True), ref)
+            ref = self._add(
+                "improved",
+                "raw_baseline",
+                self._config("baseline_rag", None, emb, reps=("raw",)),
+                None,
+            )
+            self._add(
+                "improved",
+                "raw+compiler_hybrid_routed",
+                self._config(
+                    "ablation",
+                    None,
+                    emb,
+                    reps=("raw", "compiler"),
+                    bm25=True,
+                    exact=True,
+                    graph={"enabled": True},
+                    routing=True,
+                ),
+                ref,
+            )
             for enr in sorted(self.enriched):
-                self._add("improved", "compiler_hybrid_routed",
-                          self._config("compiler_hybrid_rag", enr, emb, reps=REPS, bm25=True, exact=True,
-                                       graph={"enabled": True}, routing=True), ref,
-                          counterpart="raw+compiler_hybrid_routed")
+                self._add(
+                    "improved",
+                    "compiler_hybrid_routed",
+                    self._config(
+                        "compiler_hybrid_rag",
+                        enr,
+                        emb,
+                        reps=REPS,
+                        bm25=True,
+                        exact=True,
+                        graph={"enabled": True},
+                        routing=True,
+                    ),
+                    ref,
+                    counterpart="raw+compiler_hybrid_routed",
+                )
 
     def coupled(self) -> None:
         """Coupled chunk (enrichment + source in ONE document) vs separate raw / semantic indexes."""
         for emb in self.embeddings:
-            ref = self._add("coupled", "raw_baseline", self._config("baseline_rag", None, emb, reps=("raw",)), None)
+            ref = self._add(
+                "coupled",
+                "raw_baseline",
+                self._config("baseline_rag", None, emb, reps=("raw",)),
+                None,
+            )
             for enr in sorted(self.enriched):
                 dense_kw, hybrid_kw = dict(), dict(bm25=True, exact=True)
-                self._add("coupled", "separate_dense", self._config("ablation", enr, emb, reps=("raw", "semantic"), **dense_kw), ref)
-                self._add("coupled", "coupled_dense", self._config("ablation", enr, emb, reps=("coupled",), **dense_kw), ref,
-                          counterpart="separate_dense")
-                self._add("coupled", "coupled_dense_src", self._config("ablation", enr, emb, reps=("coupled",),
-                                                                        representation_extra={"coupled_order": "source_first"}, **dense_kw), ref,
-                          counterpart="coupled_dense")
-                self._add("coupled", "separate_hybrid", self._config("ablation", enr, emb, reps=("raw", "semantic"), **hybrid_kw), ref)
-                self._add("coupled", "coupled_hybrid", self._config("ablation", enr, emb, reps=("coupled",), **hybrid_kw), ref,
-                          counterpart="separate_hybrid")
-                self._add("coupled", "coupled_hybrid_src", self._config("ablation", enr, emb, reps=("coupled",),
-                                                                         representation_extra={"coupled_order": "source_first"}, **hybrid_kw), ref,
-                          counterpart="coupled_hybrid")
+                self._add(
+                    "coupled",
+                    "separate_dense",
+                    self._config("ablation", enr, emb, reps=("raw", "semantic"), **dense_kw),
+                    ref,
+                )
+                self._add(
+                    "coupled",
+                    "coupled_dense",
+                    self._config("ablation", enr, emb, reps=("coupled",), **dense_kw),
+                    ref,
+                    counterpart="separate_dense",
+                )
+                self._add(
+                    "coupled",
+                    "coupled_dense_src",
+                    self._config(
+                        "ablation",
+                        enr,
+                        emb,
+                        reps=("coupled",),
+                        representation_extra={"coupled_order": "source_first"},
+                        **dense_kw,
+                    ),
+                    ref,
+                    counterpart="coupled_dense",
+                )
+                self._add(
+                    "coupled",
+                    "separate_hybrid",
+                    self._config("ablation", enr, emb, reps=("raw", "semantic"), **hybrid_kw),
+                    ref,
+                )
+                self._add(
+                    "coupled",
+                    "coupled_hybrid",
+                    self._config("ablation", enr, emb, reps=("coupled",), **hybrid_kw),
+                    ref,
+                    counterpart="separate_hybrid",
+                )
+                self._add(
+                    "coupled",
+                    "coupled_hybrid_src",
+                    self._config(
+                        "ablation",
+                        enr,
+                        emb,
+                        reps=("coupled",),
+                        representation_extra={"coupled_order": "source_first"},
+                        **hybrid_kw,
+                    ),
+                    ref,
+                    counterpart="coupled_hybrid",
+                )
 
     def attribution(self) -> None:
         """All 8 combinations of {compiler text, call-graph expansion, enrichment text} on top of raw source, all routed.
@@ -329,24 +687,53 @@ class PlanBuilder:
         if not self.routing_profiles:
             raise ValueError("group 'attribution' needs routing_profiles in the suite spec")
         for emb in self.embeddings:
-            ref = self._add("attribution", "raw_baseline", self._config("baseline_rag", None, emb, reps=("raw",)), None)
+            ref = self._add(
+                "attribution",
+                "raw_baseline",
+                self._config("baseline_rag", None, emb, reps=("raw",)),
+                None,
+            )
             for compiler in (False, True):
                 for graph in (False, True):
                     reps = ("raw", "compiler") if compiler else ("raw",)
-                    self._add("attribution", f"routed:{'+'.join(reps)}{'+graph' if graph else ''}",
-                              self._config("ablation", None, emb, reps=reps, bm25=True, exact=True,
-                                           graph={"enabled": True} if graph else None, routing=True),
-                              ref, factors=f"E0C{int(compiler)}G{int(graph)}")
+                    self._add(
+                        "attribution",
+                        f"routed:{'+'.join(reps)}{'+graph' if graph else ''}",
+                        self._config(
+                            "ablation",
+                            None,
+                            emb,
+                            reps=reps,
+                            bm25=True,
+                            exact=True,
+                            graph={"enabled": True} if graph else None,
+                            routing=True,
+                        ),
+                        ref,
+                        factors=f"E0C{int(compiler)}G{int(graph)}",
+                    )
             for enr in sorted(self.enriched):
                 for compiler in (False, True):
                     for graph in (False, True):
                         reps = ("raw", "semantic", "compiler") if compiler else ("raw", "semantic")
-                        self._add("attribution", f"routed:{'+'.join(reps)}{'+graph' if graph else ''}",
-                                  self._config("ablation", enr, emb, reps=reps, bm25=True, exact=True,
-                                               graph={"enabled": True} if graph else None, routing=True),
-                                  ref, factors=f"E1C{int(compiler)}G{int(graph)}")
+                        self._add(
+                            "attribution",
+                            f"routed:{'+'.join(reps)}{'+graph' if graph else ''}",
+                            self._config(
+                                "ablation",
+                                enr,
+                                emb,
+                                reps=reps,
+                                bm25=True,
+                                exact=True,
+                                graph={"enabled": True} if graph else None,
+                                routing=True,
+                            ),
+                            ref,
+                            factors=f"E1C{int(compiler)}G{int(graph)}",
+                        )
 
-    def build(self, groups: Sequence[str]) -> List[RunSpec]:
+    def build(self, groups: Sequence[str]) -> list[RunSpec]:
         for group in groups:
             if group not in ALL_GROUPS:
                 raise ValueError(f"unknown ablation group {group!r}; choose from {ALL_GROUPS}")

@@ -31,7 +31,6 @@ from optima_kaggle.errors import (
     ResumeMismatchError,
 )
 
-
 ARTIFACTS_ROOT = Path(__file__).parent / ".optima_kaggle_artifacts"
 REAL_BASE_JSON = Path(__file__).parent.parent / "output" / "base.json"
 
@@ -44,19 +43,38 @@ def _minimal_base_json(function_count: int = 3, unique_ids: bool = True) -> dict
     functions = []
     for i in range(function_count):
         fid = f"file.cpp::fn{i if unique_ids else 0}::{i if unique_ids else 0}"
-        functions.append({
-            "id": fid, "name": f"fn{i}", "qualified_name": f"ns::fn{i}",
-            "return_type": "int", "parameters": [],
-            "source_code": f"int fn{i}(int x) {{ return x + {i}; }}",
-            "analysis_status": "success",
-            "source_location": {"file": "file.cpp", "start_line": i * 10},
-            "ast": "{}", "cfg": {}, "calls": [], "called_by": [], "dependencies": [],
-            "llvm": {}, "llvm_ir": "", "mangled_name": f"_Zfn{i}",
-        })
+        functions.append(
+            {
+                "id": fid,
+                "name": f"fn{i}",
+                "qualified_name": f"ns::fn{i}",
+                "return_type": "int",
+                "parameters": [],
+                "source_code": f"int fn{i}(int x) {{ return x + {i}; }}",
+                "analysis_status": "success",
+                "source_location": {"file": "file.cpp", "start_line": i * 10},
+                "ast": "{}",
+                "cfg": {},
+                "calls": [],
+                "called_by": [],
+                "dependencies": [],
+                "llvm": {},
+                "llvm_ir": "",
+                "mangled_name": f"_Zfn{i}",
+            }
+        )
     return {
         "project": {"name": "test", "root": "/tmp/test", "language": "cpp"},
-        "files": [{"path": "file.cpp", "name": "file.cpp", "relative_path": "file.cpp",
-                   "id": "file.cpp", "language": "cpp", "functions": functions}],
+        "files": [
+            {
+                "path": "file.cpp",
+                "name": "file.cpp",
+                "relative_path": "file.cpp",
+                "id": "file.cpp",
+                "language": "cpp",
+                "functions": functions,
+            }
+        ],
     }
 
 
@@ -75,12 +93,22 @@ class FakeTokenizer:
         return {"input_ids": ids}
 
 
-def _fake_spec(max_input_tokens=50, max_new_tokens=32, quantization="fp16",
-                single_gpu_tier="A", slug="fake-model", allow_cpu_offload=False):
+def _fake_spec(
+    max_input_tokens=50,
+    max_new_tokens=32,
+    quantization="fp16",
+    single_gpu_tier="A",
+    slug="fake-model",
+    allow_cpu_offload=False,
+):
     return models.ModelSpec(
-        slug=slug, model_id="fake-org/fake-model", quantization=quantization,
-        single_gpu_tier=single_gpu_tier, allow_cpu_offload=allow_cpu_offload,
-        max_input_tokens=max_input_tokens, max_new_tokens=max_new_tokens,
+        slug=slug,
+        model_id="fake-org/fake-model",
+        quantization=quantization,
+        single_gpu_tier=single_gpu_tier,
+        allow_cpu_offload=allow_cpu_offload,
+        max_input_tokens=max_input_tokens,
+        max_new_tokens=max_new_tokens,
     )
 
 
@@ -93,27 +121,43 @@ class _FakeHandle:
         self.load_report = {"footprint_gib": 1.0}
 
 
-def _gen_result(text, finish_reason="eos", input_tokens=10, output_tokens=5,
-                 latency_s=0.05, peak=0.5, free=5.0):
+def _gen_result(
+    text, finish_reason="eos", input_tokens=10, output_tokens=5, latency_s=0.05, peak=0.5, free=5.0
+):
     return models.GenerationResult(
-        text=text, input_tokens=input_tokens, output_tokens=output_tokens,
-        latency_s=latency_s, finish_reason=finish_reason,
-        peak_allocated_gib=peak, free_after_gib=free,
+        text=text,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        latency_s=latency_s,
+        finish_reason=finish_reason,
+        peak_allocated_gib=peak,
+        free_after_gib=free,
     )
 
 
-VALID_ENRICHMENT_JSON = json.dumps({
-    "purpose": "Adds an offset to x.", "behavior": "Returns x plus a constant offset.",
-    "summary": "Simple additive function.", "inputs": ["x"], "outputs": ["sum"],
-    "side_effects": [], "dependencies": [], "concepts": ["arithmetic"], "keywords": ["add"],
-    "algorithm": "Direct addition.", "complexity": {"time": "O(1)", "space": "O(1)"},
-})
+VALID_ENRICHMENT_JSON = json.dumps(
+    {
+        "purpose": "Adds an offset to x.",
+        "behavior": "Returns x plus a constant offset.",
+        "summary": "Simple additive function.",
+        "inputs": ["x"],
+        "outputs": ["sum"],
+        "side_effects": [],
+        "dependencies": [],
+        "concepts": ["arithmetic"],
+        "keywords": ["add"],
+        "algorithm": "Direct addition.",
+        "complexity": {"time": "O(1)", "space": "O(1)"},
+    }
+)
 
 
 class EnvironmentTests(unittest.TestCase):
     def test_parse_version_orders_correctly(self):
         self.assertLess(environment._parse_version("0.42.0"), environment._parse_version("0.43.0"))
-        self.assertGreater(environment._parse_version("0.45.1"), environment._parse_version("0.45.0"))
+        self.assertGreater(
+            environment._parse_version("0.45.1"), environment._parse_version("0.45.0")
+        )
 
     def test_ensure_python_deps_reports_installed_packages_without_installing(self):
         report = environment.ensure_python_deps(allow_install=False)
@@ -128,6 +172,7 @@ class EnvironmentTests(unittest.TestCase):
     def test_assert_gpu_clean_passes_when_idle(self):
         try:
             import torch
+
             if not torch.cuda.is_available():
                 self.skipTest("no CUDA device available in this environment")
         except ImportError:
@@ -185,6 +230,7 @@ class SnapshotDownloadTests(unittest.TestCase):
 
     def test_gzip_source_is_decompressed_and_hashed_on_decompressed_content(self):
         import gzip
+
         content = json.dumps(_minimal_base_json()).encode("utf-8")
         gz_path = self.root / "source" / "base.json.gz"
         gz_path.parent.mkdir(parents=True, exist_ok=True)
@@ -301,7 +347,9 @@ class LoadBaseSnapshotTests(unittest.TestCase):
 
     def test_missing_local_path_raises(self):
         with self.assertRaises(BaseJsonError):
-            snapshot.load_base_snapshot(str(self.root / "does-not-exist.json"), self.root / "outputs")
+            snapshot.load_base_snapshot(
+                str(self.root / "does-not-exist.json"), self.root / "outputs"
+            )
 
     def test_expected_sha256_mismatch_raises_for_local_path(self):
         path = self._write_local("base.json", _minimal_base_json())
@@ -382,14 +430,35 @@ class RunContextTests(unittest.TestCase):
         base_path = run_dir / "base" / "base.json"
         base_path.parent.mkdir(parents=True)
         base_path.write_bytes(content)
-        return snapshot.BaseSnapshot(path=base_path, sha256=sha, bytes=len(content),
-                                     url="file:///fake", etag=None, downloaded_at="now", run_dir=run_dir)
+        return snapshot.BaseSnapshot(
+            path=base_path,
+            sha256=sha,
+            bytes=len(content),
+            url="file:///fake",
+            etag=None,
+            downloaded_at="now",
+            run_dir=run_dir,
+        )
 
     def test_create_initializes_directories_and_manifest(self):
-        ctx = snapshot.RunContext.create(self.root, self._snap(), {"a": 1}, {"gpu": "fake"},
-                                         "deadbeef", configured_models=["m1", "m2"])
-        for sub in (ctx.base_dir, ctx.benchmark_dir, ctx.smoke_dir, ctx.enriched_dir,
-                    ctx.rag_inputs_dir, ctx.rag_dir, ctx.logs_dir, ctx.summaries_dir):
+        ctx = snapshot.RunContext.create(
+            self.root,
+            self._snap(),
+            {"a": 1},
+            {"gpu": "fake"},
+            "deadbeef",
+            configured_models=["m1", "m2"],
+        )
+        for sub in (
+            ctx.base_dir,
+            ctx.benchmark_dir,
+            ctx.smoke_dir,
+            ctx.enriched_dir,
+            ctx.rag_inputs_dir,
+            ctx.rag_dir,
+            ctx.logs_dir,
+            ctx.summaries_dir,
+        ):
             self.assertTrue(sub.exists())
         manifest = ctx.load_manifest()
         self.assertEqual(manifest["configured_models"], ["m1", "m2"])
@@ -415,9 +484,15 @@ class FreezeBenchmarkTests(unittest.TestCase):
         base_dir.mkdir(parents=True)
         # Symlink instead of copying an ~80MB fixture.
         (base_dir / "base.json").symlink_to(REAL_BASE_JSON.resolve())
-        self.snap = snapshot.BaseSnapshot(path=base_dir / "base.json", sha256=sha,
-                                          bytes=REAL_BASE_JSON.stat().st_size, url="file:///real",
-                                          etag=None, downloaded_at="now", run_dir=run_dir)
+        self.snap = snapshot.BaseSnapshot(
+            path=base_dir / "base.json",
+            sha256=sha,
+            bytes=REAL_BASE_JSON.stat().st_size,
+            url="file:///real",
+            etag=None,
+            downloaded_at="now",
+            run_dir=run_dir,
+        )
         self.ctx = snapshot.RunContext.create(self.root, self.snap, {}, {}, "deadbeef")
 
     def tearDown(self):
@@ -436,15 +511,31 @@ class FreezeBenchmarkTests(unittest.TestCase):
         (self.ctx.benchmark_dir / "benchmark_manifest.json").unlink()
 
         poison = self.ctx.enriched_dir / "enhanced_poison-model.json"
-        poison.write_text(json.dumps({
-            "project": {"name": "poison"},
-            "files": [{"path": "p.cpp", "functions": [{
-                "id": "p.cpp::poisoned::1", "name": "poisoned", "qualified_name": "poisoned",
-                "source_code": "void poisoned() {}",
-                "enrichment": {**json.loads(VALID_ENRICHMENT_JSON), "model": "poison",
-                               "status": "completed"},
-            }]}],
-        }))
+        poison.write_text(
+            json.dumps(
+                {
+                    "project": {"name": "poison"},
+                    "files": [
+                        {
+                            "path": "p.cpp",
+                            "functions": [
+                                {
+                                    "id": "p.cpp::poisoned::1",
+                                    "name": "poisoned",
+                                    "qualified_name": "poisoned",
+                                    "source_code": "void poisoned() {}",
+                                    "enrichment": {
+                                        **json.loads(VALID_ENRICHMENT_JSON),
+                                        "model": "poison",
+                                        "status": "completed",
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            )
+        )
         bench_after_poison = snapshot.freeze_benchmark(self.ctx, num_queries=12, seed=42)
         self.assertEqual(bench_clean["queries"], bench_after_poison["queries"])
 
@@ -452,8 +543,13 @@ class FreezeBenchmarkTests(unittest.TestCase):
 class ModelSpecTests(unittest.TestCase):
     def test_slug_cannot_collide_with_reserved_corpus_names(self):
         with self.assertRaises(ValueError):
-            models.ModelSpec(slug="raw", model_id="x", quantization="fp16",
-                             single_gpu_tier="A", max_input_tokens=10)
+            models.ModelSpec(
+                slug="raw",
+                model_id="x",
+                quantization="fp16",
+                single_gpu_tier="A",
+                max_input_tokens=10,
+            )
 
     def test_resolve_unknown_slug_raises_key_error(self):
         with self.assertRaises(KeyError):
@@ -479,12 +575,18 @@ class ModelSpecTests(unittest.TestCase):
         self.assertIsNone(spec.max_new_tokens)  # no artificial cap by default
         self.assertNotIn(spec.slug, models.MODEL_REGISTRY)  # confirms no registry involvement
         # slug must be self-consistent with ModelSpec's own validation
-        models.ModelSpec(slug=spec.slug, model_id=spec.model_id, quantization=spec.quantization,
-                         single_gpu_tier=spec.single_gpu_tier, max_input_tokens=spec.max_input_tokens)
+        models.ModelSpec(
+            slug=spec.slug,
+            model_id=spec.model_id,
+            quantization=spec.quantization,
+            single_gpu_tier=spec.single_gpu_tier,
+            max_input_tokens=spec.max_input_tokens,
+        )
 
     def test_spec_from_model_id_honors_overrides(self):
-        spec = models.spec_from_model_id("org/some-model", quantization="fp16",
-                                         max_input_tokens=800, max_new_tokens=128)
+        spec = models.spec_from_model_id(
+            "org/some-model", quantization="fp16", max_input_tokens=800, max_new_tokens=128
+        )
         self.assertEqual(spec.quantization, "fp16")
         self.assertEqual(spec.max_input_tokens, 800)
         self.assertEqual(spec.max_new_tokens, 128)
@@ -505,21 +607,39 @@ class ModelFitTests(unittest.TestCase):
 
     @staticmethod
     def _fake_estimate(weights_gib, config=None):
-        config = config or mock.Mock(num_hidden_layers=2, num_key_value_heads=2, hidden_size=64,
-                                     num_attention_heads=2, head_dim=32)
-        return {"weights_gib": weights_gib, "config": config, "quantizable_params": 1, "other_params": 1}
+        config = config or mock.Mock(
+            num_hidden_layers=2,
+            num_key_value_heads=2,
+            hidden_size=64,
+            num_attention_heads=2,
+            head_dim=32,
+        )
+        return {
+            "weights_gib": weights_gib,
+            "config": config,
+            "quantizable_params": 1,
+            "other_params": 1,
+        }
 
     def test_check_fit_raises_when_synthetic_free_memory_is_too_small(self):
         spec = _fake_spec()
-        with mock.patch.object(models, "estimate_weights_gib", return_value=self._fake_estimate(10.0)), \
-             mock.patch("torch.cuda.mem_get_info", return_value=(1 * 1024**3, 8 * 1024**3)):
+        with (
+            mock.patch.object(
+                models, "estimate_weights_gib", return_value=self._fake_estimate(10.0)
+            ),
+            mock.patch("torch.cuda.mem_get_info", return_value=(1 * 1024**3, 8 * 1024**3)),
+        ):
             with self.assertRaises(ModelDoesNotFitError):
                 models.check_fit(spec, num_gpus=1)
 
     def test_check_fit_chooses_single_gpu_placement_when_one_gpu_suffices(self):
         spec = _fake_spec()
-        with mock.patch.object(models, "estimate_weights_gib", return_value=self._fake_estimate(1.0)), \
-             mock.patch("torch.cuda.mem_get_info", return_value=(20 * 1024**3, 24 * 1024**3)):
+        with (
+            mock.patch.object(
+                models, "estimate_weights_gib", return_value=self._fake_estimate(1.0)
+            ),
+            mock.patch("torch.cuda.mem_get_info", return_value=(20 * 1024**3, 24 * 1024**3)),
+        ):
             report = models.check_fit(spec, num_gpus=1)
             self.assertTrue(report.fits)
             self.assertEqual(report.placement, "single_gpu")
@@ -530,8 +650,12 @@ class ModelFitTests(unittest.TestCase):
         spec = _fake_spec()
         # Each GPU has 8 GiB free; 10 GiB of weights needs both combined,
         # but no single GPU (8 GiB) could hold 10 GiB + headroom alone.
-        with mock.patch.object(models, "estimate_weights_gib", return_value=self._fake_estimate(10.0)), \
-             mock.patch("torch.cuda.mem_get_info", return_value=(8 * 1024 ** 3, 12 * 1024 ** 3)):
+        with (
+            mock.patch.object(
+                models, "estimate_weights_gib", return_value=self._fake_estimate(10.0)
+            ),
+            mock.patch("torch.cuda.mem_get_info", return_value=(8 * 1024**3, 12 * 1024**3)),
+        ):
             report = models.check_fit(spec, num_gpus=2)
             self.assertTrue(report.fits)
             self.assertEqual(report.placement, "sharded")
@@ -540,16 +664,24 @@ class ModelFitTests(unittest.TestCase):
 
     def test_check_fit_raises_when_even_sharded_across_two_gpus_does_not_fit(self):
         spec = _fake_spec(allow_cpu_offload=False)
-        with mock.patch.object(models, "estimate_weights_gib", return_value=self._fake_estimate(100.0)), \
-             mock.patch("torch.cuda.mem_get_info", return_value=(6 * 1024 ** 3, 8 * 1024 ** 3)):
+        with (
+            mock.patch.object(
+                models, "estimate_weights_gib", return_value=self._fake_estimate(100.0)
+            ),
+            mock.patch("torch.cuda.mem_get_info", return_value=(6 * 1024**3, 8 * 1024**3)),
+        ):
             with self.assertRaises(ModelDoesNotFitError):
                 models.check_fit(spec, num_gpus=2)
 
     def test_check_fit_falls_back_to_cpu_offload_when_allowed_and_sufficient(self):
         spec = _fake_spec(allow_cpu_offload=True)
-        with mock.patch.object(models, "estimate_weights_gib", return_value=self._fake_estimate(20.0)), \
-             mock.patch("torch.cuda.mem_get_info", return_value=(6 * 1024 ** 3, 8 * 1024 ** 3)), \
-             mock.patch.object(environment, "cpu_free_ram_gib", return_value=50.0):
+        with (
+            mock.patch.object(
+                models, "estimate_weights_gib", return_value=self._fake_estimate(20.0)
+            ),
+            mock.patch("torch.cuda.mem_get_info", return_value=(6 * 1024**3, 8 * 1024**3)),
+            mock.patch.object(environment, "cpu_free_ram_gib", return_value=50.0),
+        ):
             report = models.check_fit(spec, num_gpus=2, allow_cpu_offload=True)
             self.assertTrue(report.fits)
             self.assertEqual(report.placement, "sharded_cpu_offload")
@@ -558,9 +690,13 @@ class ModelFitTests(unittest.TestCase):
 
     def test_check_fit_does_not_use_cpu_offload_unless_allowed(self):
         spec = _fake_spec(allow_cpu_offload=False)
-        with mock.patch.object(models, "estimate_weights_gib", return_value=self._fake_estimate(20.0)), \
-             mock.patch("torch.cuda.mem_get_info", return_value=(6 * 1024 ** 3, 8 * 1024 ** 3)), \
-             mock.patch.object(environment, "cpu_free_ram_gib", return_value=50.0):
+        with (
+            mock.patch.object(
+                models, "estimate_weights_gib", return_value=self._fake_estimate(20.0)
+            ),
+            mock.patch("torch.cuda.mem_get_info", return_value=(6 * 1024**3, 8 * 1024**3)),
+            mock.patch.object(environment, "cpu_free_ram_gib", return_value=50.0),
+        ):
             with self.assertRaises(ModelDoesNotFitError):
                 models.check_fit(spec, num_gpus=2, allow_cpu_offload=False)
 
@@ -568,13 +704,18 @@ class ModelFitTests(unittest.TestCase):
         spec = _fake_spec()
         fake_sibling = mock.Mock(rfilename="model.safetensors", size=2 * 1024**3)
         fake_info = mock.Mock(siblings=[fake_sibling])
-        with mock.patch("huggingface_hub.HfApi.model_info", return_value=fake_info), \
-             mock.patch.object(environment, "disk_free_gib", return_value=100.0):
+        with (
+            mock.patch("huggingface_hub.HfApi.model_info", return_value=fake_info),
+            mock.patch.object(environment, "disk_free_gib", return_value=100.0),
+        ):
             report = models.check_disk_for_download(spec)
             self.assertTrue(report["ok"])
-        with mock.patch("huggingface_hub.HfApi.model_info", return_value=fake_info), \
-             mock.patch.object(environment, "disk_free_gib", return_value=0.5):
+        with (
+            mock.patch("huggingface_hub.HfApi.model_info", return_value=fake_info),
+            mock.patch.object(environment, "disk_free_gib", return_value=0.5),
+        ):
             from optima_kaggle.errors import InsufficientDiskError
+
             with self.assertRaises(InsufficientDiskError):
                 models.check_disk_for_download(spec)
 
@@ -633,14 +774,18 @@ class EnrichOneTests(unittest.TestCase):
         self.root.mkdir(parents=True)
         self.fn = _minimal_base_json(1)["files"][0]["functions"][0]
         self.handle = _FakeHandle(_fake_spec(max_input_tokens=1000, max_new_tokens=32))
-        self.gen = GenerationSettings(retries=2, max_new_tokens=32, prompt_variant="colab_v2_no_module_ir")
+        self.gen = GenerationSettings(
+            retries=2, max_new_tokens=32, prompt_variant="colab_v2_no_module_ir"
+        )
         self.attempts_log = self.root / "attempts.jsonl"
 
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
 
     def test_valid_json_on_first_attempt_completes(self):
-        with mock.patch.object(models, "generate_text", return_value=_gen_result(VALID_ENRICHMENT_JSON)):
+        with mock.patch.object(
+            models, "generate_text", return_value=_gen_result(VALID_ENRICHMENT_JSON)
+        ):
             record = enrichment.enrich_one(self.handle, self.fn, self.gen, self.attempts_log)
         self.assertEqual(record["status"], "completed")
         self.assertTrue(record["evaluation"]["request_success"])
@@ -659,12 +804,16 @@ class EnrichOneTests(unittest.TestCase):
 
     def test_raw_response_is_preserved_on_success_too(self):
         # For every function, success or failure -- not just on failure.
-        with mock.patch.object(models, "generate_text", return_value=_gen_result(VALID_ENRICHMENT_JSON)):
+        with mock.patch.object(
+            models, "generate_text", return_value=_gen_result(VALID_ENRICHMENT_JSON)
+        ):
             record = enrichment.enrich_one(self.handle, self.fn, self.gen, self.attempts_log)
         self.assertEqual(record["evaluation"]["raw_response"], VALID_ENRICHMENT_JSON)
 
     def test_garbage_output_exhausts_retries_and_preserves_raw_response(self):
-        with mock.patch.object(models, "generate_text", return_value=_gen_result("not json at all")):
+        with mock.patch.object(
+            models, "generate_text", return_value=_gen_result("not json at all")
+        ):
             record = enrichment.enrich_one(self.handle, self.fn, self.gen, self.attempts_log)
         self.assertEqual(record["status"], "failed")
         evaluation = record["evaluation"]
@@ -680,7 +829,9 @@ class EnrichOneTests(unittest.TestCase):
         # the function is kept (status/evaluation/usage are still present,
         # so it is never dropped from the checkpoint), but nothing here
         # claims to be content the model actually produced.
-        with mock.patch.object(models, "generate_text", return_value=_gen_result("not json at all")):
+        with mock.patch.object(
+            models, "generate_text", return_value=_gen_result("not json at all")
+        ):
             record = enrichment.enrich_one(self.handle, self.fn, self.gen, self.attempts_log)
         self.assertNotIn("purpose", record)
         self.assertNotIn("behavior", record)
@@ -704,7 +855,9 @@ class EnrichOneTests(unittest.TestCase):
         self.assertIsNone(record["evaluation"]["failure_category"])
         self.assertTrue(record["evaluation"]["request_success"])
         self.assertTrue(record["evaluation"]["json_valid"])  # JSON was recovered
-        self.assertFalse(record["evaluation"]["schema_valid"])  # but schema-incomplete; recorded, not gated on
+        self.assertFalse(
+            record["evaluation"]["schema_valid"]
+        )  # but schema-incomplete; recorded, not gated on
         self.assertEqual(record["purpose"], "x")  # the model's actual text, unchanged
         self.assertEqual(record["evaluation"]["retry_count"], 0)  # not retried over schema
 
@@ -712,8 +865,13 @@ class EnrichOneTests(unittest.TestCase):
         # The model genuinely writing "Insufficient implementation context."
         # (the prompt itself suggests this exact phrase when evidence is
         # thin) is a real, schema-valid answer -- not a rejected response.
-        text = json.dumps({**json.loads(VALID_ENRICHMENT_JSON), "purpose": "Insufficient implementation context.",
-                           "behavior": "Insufficient implementation context."})
+        text = json.dumps(
+            {
+                **json.loads(VALID_ENRICHMENT_JSON),
+                "purpose": "Insufficient implementation context.",
+                "behavior": "Insufficient implementation context.",
+            }
+        )
         with mock.patch.object(models, "generate_text", return_value=_gen_result(text)):
             record = enrichment.enrich_one(self.handle, self.fn, self.gen, self.attempts_log)
         self.assertEqual(record["status"], "completed")
@@ -722,16 +880,19 @@ class EnrichOneTests(unittest.TestCase):
         self.assertIsNone(record["evaluation"]["failure_category"])
 
     def test_length_finish_with_bad_json_is_output_truncated(self):
-        with mock.patch.object(models, "generate_text",
-                               return_value=_gen_result("{incomplete", finish_reason="length")):
+        with mock.patch.object(
+            models, "generate_text", return_value=_gen_result("{incomplete", finish_reason="length")
+        ):
             record = enrichment.enrich_one(self.handle, self.fn, self.gen, self.attempts_log)
         self.assertEqual(record["evaluation"]["failure_category"], "output_truncated")
 
     def test_cuda_oom_gets_one_reduced_budget_retry_then_succeeds(self):
         import torch
+
         oom = torch.cuda.OutOfMemoryError("simulated oom")
-        with mock.patch.object(models, "generate_text",
-                               side_effect=[oom, _gen_result(VALID_ENRICHMENT_JSON)]):
+        with mock.patch.object(
+            models, "generate_text", side_effect=[oom, _gen_result(VALID_ENRICHMENT_JSON)]
+        ):
             record = enrichment.enrich_one(self.handle, self.fn, self.gen, self.attempts_log)
         self.assertEqual(record["status"], "completed")
         lines = [json.loads(line) for line in self.attempts_log.read_text().splitlines()]
@@ -740,9 +901,12 @@ class EnrichOneTests(unittest.TestCase):
 
     def test_cuda_oom_persists_but_continues_when_gpu_recovers(self):
         import torch
+
         oom = torch.cuda.OutOfMemoryError("simulated oom")
-        with mock.patch.object(models, "generate_text", side_effect=[oom, oom]), \
-             mock.patch("torch.cuda.mem_get_info", return_value=(5 * 1024 ** 3, 8 * 1024 ** 3)):
+        with (
+            mock.patch.object(models, "generate_text", side_effect=[oom, oom]),
+            mock.patch("torch.cuda.mem_get_info", return_value=(5 * 1024**3, 8 * 1024**3)),
+        ):
             record = enrichment.enrich_one(self.handle, self.fn, self.gen, self.attempts_log)
         # A single OOM'd function must not raise/abort the run when the GPU
         # recovered real headroom afterward -- it is recorded as failed and
@@ -754,15 +918,21 @@ class EnrichOneTests(unittest.TestCase):
 
     def test_cuda_oom_aborts_when_gpu_still_unhealthy_after_retry(self):
         import torch
+
         oom = torch.cuda.OutOfMemoryError("simulated oom")
-        with mock.patch.object(models, "generate_text", side_effect=[oom, oom]), \
-             mock.patch("torch.cuda.mem_get_info", return_value=(0.1 * 1024 ** 3, 8 * 1024 ** 3)):
+        with (
+            mock.patch.object(models, "generate_text", side_effect=[oom, oom]),
+            mock.patch("torch.cuda.mem_get_info", return_value=(0.1 * 1024**3, 8 * 1024**3)),
+        ):
             with self.assertRaises(GenerationOOMError):
                 enrichment.enrich_one(self.handle, self.fn, self.gen, self.attempts_log)
 
     def test_generation_error_is_retried_then_recovers(self):
-        with mock.patch.object(models, "generate_text",
-                               side_effect=[RuntimeError("transient"), _gen_result(VALID_ENRICHMENT_JSON)]):
+        with mock.patch.object(
+            models,
+            "generate_text",
+            side_effect=[RuntimeError("transient"), _gen_result(VALID_ENRICHMENT_JSON)],
+        ):
             record = enrichment.enrich_one(self.handle, self.fn, self.gen, self.attempts_log)
         self.assertEqual(record["status"], "completed")
         self.assertEqual(record["evaluation"]["retry_count"], 1)
@@ -782,9 +952,13 @@ class CheckpointTests(unittest.TestCase):
         shutil.rmtree(self.root, ignore_errors=True)
 
     def _completed_enrichment(self):
-        return {**json.loads(VALID_ENRICHMENT_JSON), "model": "m", "status": "completed",
-                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-                "evaluation": {"request_success": True, "json_valid": True, "retry_count": 0}}
+        return {
+            **json.loads(VALID_ENRICHMENT_JSON),
+            "model": "m",
+            "status": "completed",
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            "evaluation": {"request_success": True, "json_valid": True, "retry_count": 0},
+        }
 
     def test_append_and_is_completed(self):
         ckpt = Checkpoint(self.path)
@@ -815,7 +989,9 @@ class CheckpointTests(unittest.TestCase):
         ckpt.open_or_create(self.header)
         ckpt.append("f1", self._completed_enrichment())
         with self.path.open("a") as handle:
-            handle.write('{"type": "function", "function_id": "f2", "incomple')  # no trailing newline
+            handle.write(
+                '{"type": "function", "function_id": "f2", "incomple'
+            )  # no trailing newline
         reloaded = Checkpoint(self.path)
         reloaded.open_or_create(self.header)
         self.assertTrue(reloaded.is_completed("f1"))
@@ -827,9 +1003,17 @@ class CheckpointTests(unittest.TestCase):
         ckpt.append("f1", self._completed_enrichment())
         with self.path.open("a") as handle:
             handle.write("not json at all\n")
-            handle.write(json.dumps({"type": "function", "function_id": "f2",
-                                     "enrichment": self._completed_enrichment(),
-                                     "status": "completed"}) + "\n")
+            handle.write(
+                json.dumps(
+                    {
+                        "type": "function",
+                        "function_id": "f2",
+                        "enrichment": self._completed_enrichment(),
+                        "status": "completed",
+                    }
+                )
+                + "\n"
+            )
         reloaded = Checkpoint(self.path)
         with self.assertRaises(CheckpointCorruptError):
             reloaded.open_or_create(self.header)
@@ -848,9 +1032,15 @@ class MaterializeTests(unittest.TestCase):
         base_path = run_dir / "base" / "base.json"
         base_path.parent.mkdir(parents=True)
         base_path.write_bytes(content)
-        self.snap = snapshot.BaseSnapshot(path=base_path, sha256=sha, bytes=len(content),
-                                          url="file:///fake", etag=None, downloaded_at="now",
-                                          run_dir=run_dir)
+        self.snap = snapshot.BaseSnapshot(
+            path=base_path,
+            sha256=sha,
+            bytes=len(content),
+            url="file:///fake",
+            etag=None,
+            downloaded_at="now",
+            run_dir=run_dir,
+        )
         self.ctx = snapshot.RunContext.create(self.root, self.snap, {}, {}, "deadbeef")
         self.spec = _fake_spec(max_input_tokens=1000, slug="materialize-model")
         self.gen = GenerationSettings(retries=1, max_new_tokens=32)
@@ -862,21 +1052,28 @@ class MaterializeTests(unittest.TestCase):
         from colab.colab_pipeline import flatten_functions, load_json, validate_json
 
         ckpt = Checkpoint(self.ctx.enriched_dir / f"{self.spec.slug}.checkpoint.jsonl")
-        ckpt.open_or_create({"base_sha256": self.snap.sha256,
-                             "config_hash": enrichment.config_hash(self.spec, self.gen),
-                             "created_at": "now"})
+        ckpt.open_or_create(
+            {
+                "base_sha256": self.snap.sha256,
+                "config_hash": enrichment.config_hash(self.spec, self.gen),
+                "created_at": "now",
+            }
+        )
 
         base = load_json(self.snap.path)
         functions = flatten_functions(base)
         handle = _FakeHandle(self.spec)
         attempts_log = self.ctx.logs_dir / self.spec.slug / "attempts.jsonl"
-        with mock.patch.object(models, "generate_text", return_value=_gen_result(VALID_ENRICHMENT_JSON)):
+        with mock.patch.object(
+            models, "generate_text", return_value=_gen_result(VALID_ENRICHMENT_JSON)
+        ):
             for fn in functions:
                 record = enrichment.enrich_one(handle, fn, self.gen, attempts_log)
                 ckpt.append(fn["id"], record)
 
-        out_path = enrichment.materialize(self.ctx, self.snap, self.spec, self.gen, ckpt,
-                                          elapsed=1.0, partial=False)
+        out_path = enrichment.materialize(
+            self.ctx, self.snap, self.spec, self.gen, ckpt, elapsed=1.0, partial=False
+        )
         info = validate_json(out_path)
         self.assertTrue(info["valid"])
         self.assertEqual(info["status"], "ENRICHED JSON")
@@ -892,7 +1089,9 @@ class MaterializeTests(unittest.TestCase):
             self.assertEqual(fn["enrichment_metadata"]["json_parse_status"], "recovered")
             self.assertEqual(fn["enrichment_metadata"]["json_recovery_method"], "json")
 
-    def test_materialize_json_valid_rate_matches_success_rate_when_all_failures_are_invalid_json(self):
+    def test_materialize_json_valid_rate_matches_success_rate_when_all_failures_are_invalid_json(
+        self,
+    ):
         # Regression for the bug where json_valid_rate (tied to full schema
         # conformance) diverged wildly from success_rate (tied to whether
         # JSON was recovered at all) even though every failure in the run
@@ -900,22 +1099,29 @@ class MaterializeTests(unittest.TestCase):
         from colab.colab_pipeline import flatten_functions, load_json
 
         ckpt = Checkpoint(self.ctx.enriched_dir / f"{self.spec.slug}.checkpoint.jsonl")
-        ckpt.open_or_create({"base_sha256": self.snap.sha256,
-                             "config_hash": enrichment.config_hash(self.spec, self.gen),
-                             "created_at": "now"})
+        ckpt.open_or_create(
+            {
+                "base_sha256": self.snap.sha256,
+                "config_hash": enrichment.config_hash(self.spec, self.gen),
+                "created_at": "now",
+            }
+        )
 
         base = load_json(self.snap.path)
         functions = flatten_functions(base)
         handle = _FakeHandle(self.spec)
         attempts_log = self.ctx.logs_dir / self.spec.slug / "attempts.jsonl"
         responses = [_gen_result(VALID_ENRICHMENT_JSON), _gen_result("not json at all")]
-        with mock.patch.object(models, "generate_text", side_effect=lambda *a, **k: responses.pop(0)):
+        with mock.patch.object(
+            models, "generate_text", side_effect=lambda *a, **k: responses.pop(0)
+        ):
             for fn in functions:
                 record = enrichment.enrich_one(handle, fn, self.gen, attempts_log)
                 ckpt.append(fn["id"], record)
 
-        out_path = enrichment.materialize(self.ctx, self.snap, self.spec, self.gen, ckpt,
-                                          elapsed=1.0, partial=False)
+        out_path = enrichment.materialize(
+            self.ctx, self.snap, self.spec, self.gen, ckpt, elapsed=1.0, partial=False
+        )
         metrics = load_json(out_path)["enrichment_metrics"]
         self.assertEqual(metrics["successful_requests"], 1)
         self.assertEqual(metrics["failed_requests"], 1)
@@ -938,9 +1144,15 @@ class RetrievalEvalTests(unittest.TestCase):
         base_path = run_dir / "base" / "base.json"
         base_path.parent.mkdir(parents=True)
         base_path.write_bytes(content)
-        self.snap = snapshot.BaseSnapshot(path=base_path, sha256=sha, bytes=len(content),
-                                          url="file:///fake", etag=None, downloaded_at="now",
-                                          run_dir=run_dir)
+        self.snap = snapshot.BaseSnapshot(
+            path=base_path,
+            sha256=sha,
+            bytes=len(content),
+            url="file:///fake",
+            etag=None,
+            downloaded_at="now",
+            run_dir=run_dir,
+        )
         self.ctx = snapshot.RunContext.create(self.root, self.snap, {}, {}, "deadbeef")
 
     def tearDown(self):
@@ -962,7 +1174,10 @@ class RetrievalEvalTests(unittest.TestCase):
         base = load_json(self.snap.path)
         functions = flatten_functions(base)
         functions[0]["enrichment"] = {**json.loads(VALID_ENRICHMENT_JSON), "status": "completed"}
-        functions[1]["enrichment"] = {"status": "failed", "purpose": "Insufficient implementation context."}
+        functions[1]["enrichment"] = {
+            "status": "failed",
+            "purpose": "Insufficient implementation context.",
+        }
         save_json(base, self.ctx.enriched_dir / "enhanced_m1.json")
 
         view_path = retrieval_eval.make_embedding_view(self.ctx, "m1")
@@ -980,15 +1195,26 @@ class RetrievalEvalTests(unittest.TestCase):
 
     def test_build_comparison_rejects_mismatched_prompt_variants(self):
         for slug, variant in (("m1", "colab_v2"), ("m2", "colab_v2_no_module_ir")):
-            (self.ctx.enriched_dir / f"enhanced_{slug}.json").write_text(json.dumps({
-                "experiment": {"prompt_variant": variant, "do_sample": False, "max_new_tokens": 768,
-                              "retries": 2, "base_sha256": self.snap.sha256, "model": slug},
-                "enrichment_metadata": {"quantization": "nf4"},
-                "enrichment_metrics": {"success_rate": 1.0, "functions_failed": 0},
-            }))
+            (self.ctx.enriched_dir / f"enhanced_{slug}.json").write_text(
+                json.dumps(
+                    {
+                        "experiment": {
+                            "prompt_variant": variant,
+                            "do_sample": False,
+                            "max_new_tokens": 768,
+                            "retries": 2,
+                            "base_sha256": self.snap.sha256,
+                            "model": slug,
+                        },
+                        "enrichment_metadata": {"quantization": "nf4"},
+                        "enrichment_metrics": {"success_rate": 1.0, "functions_failed": 0},
+                    }
+                )
+            )
         with self.assertRaises(ComparisonMismatchError):
-            retrieval_eval.build_comparison(self.ctx, {}, ["raw", "m1", "m2"],
-                                            {"manifest": {"sha256": "bench"}, "queries": []})
+            retrieval_eval.build_comparison(
+                self.ctx, {}, ["raw", "m1", "m2"], {"manifest": {"sha256": "bench"}, "queries": []}
+            )
 
 
 class GateBehaviorTests(unittest.TestCase):
@@ -1011,9 +1237,15 @@ class GateBehaviorTests(unittest.TestCase):
         base_path = run_dir / "base" / "base.json"
         base_path.parent.mkdir(parents=True)
         base_path.write_bytes(content)
-        self.snap = snapshot.BaseSnapshot(path=base_path, sha256=sha, bytes=len(content),
-                                          url="file:///fake", etag=None, downloaded_at="now",
-                                          run_dir=run_dir)
+        self.snap = snapshot.BaseSnapshot(
+            path=base_path,
+            sha256=sha,
+            bytes=len(content),
+            url="file:///fake",
+            etag=None,
+            downloaded_at="now",
+            run_dir=run_dir,
+        )
         self.ctx = snapshot.RunContext.create(self.root, self.snap, {}, {}, "deadbeef")
         self.spec = _fake_spec(max_input_tokens=1000, slug="gate-behavior-model")
         self.gen = GenerationSettings(retries=1, max_new_tokens=32)
@@ -1077,7 +1309,9 @@ class GateBehaviorTests(unittest.TestCase):
         self.assertEqual(result["details"]["status"], "PASSED")
 
     def test_gate4_still_fails_when_a_functional_check_actually_fails(self):
-        with mock.patch.object(models, "generate_text", return_value=_gen_result("not json at all")):
+        with mock.patch.object(
+            models, "generate_text", return_value=_gen_result("not json at all")
+        ):
             with self.assertRaises(GateFailedError):
                 enrichment.gate4_three_functions(self.ctx, self.handle, self.gen, self.snap)
 
@@ -1085,9 +1319,15 @@ class GateBehaviorTests(unittest.TestCase):
 
     def test_enrich_one_records_gpu_placement_per_function(self):
         handle = _FakeHandle(self.spec)
-        handle.load_report = {"gpu_placement": "sharded", "gpu_count_used": 2, "used_cpu_offload": False}
+        handle.load_report = {
+            "gpu_placement": "sharded",
+            "gpu_count_used": 2,
+            "used_cpu_offload": False,
+        }
         fn = _minimal_base_json(1)["files"][0]["functions"][0]
-        with mock.patch.object(models, "generate_text", return_value=_gen_result(VALID_ENRICHMENT_JSON)):
+        with mock.patch.object(
+            models, "generate_text", return_value=_gen_result(VALID_ENRICHMENT_JSON)
+        ):
             record = enrichment.enrich_one(handle, fn, self.gen, self.root / "attempts.jsonl")
         self.assertEqual(record["evaluation"]["gpu_placement"], "sharded")
         self.assertEqual(record["evaluation"]["gpu_count_used"], 2)
@@ -1095,7 +1335,9 @@ class GateBehaviorTests(unittest.TestCase):
 
     # --- GATE 4's conservative generation budget must not perturb config_hash ---
 
-    def test_gate4_max_new_tokens_override_is_passed_to_generation_without_changing_config_hash(self):
+    def test_gate4_max_new_tokens_override_is_passed_to_generation_without_changing_config_hash(
+        self,
+    ):
         fn = _minimal_base_json(1)["files"][0]["functions"][0]
         captured_kwargs = {}
 
@@ -1105,8 +1347,9 @@ class GateBehaviorTests(unittest.TestCase):
 
         expected_hash = enrichment.config_hash(self.spec, self.gen)
         with mock.patch.object(models, "generate_text", side_effect=_capture):
-            record = enrichment.enrich_one(self.handle, fn, self.gen, self.root / "attempts.jsonl",
-                                           max_new_tokens_override=256)
+            record = enrichment.enrich_one(
+                self.handle, fn, self.gen, self.root / "attempts.jsonl", max_new_tokens_override=256
+            )
         self.assertEqual(captured_kwargs["max_new_tokens"], 256)
         self.assertEqual(record["evaluation"]["context_metrics"]["max_new_tokens"], 256)
         # gen.max_new_tokens itself, and therefore config_hash, is untouched.
@@ -1122,16 +1365,18 @@ class GateBehaviorTests(unittest.TestCase):
             return _gen_result(texts[len(captured) - 1])
 
         with mock.patch.object(models, "generate_text", side_effect=_capture):
-            enrichment.gate4_three_functions(self.ctx, self.handle, self.gen, self.snap,
-                                             max_new_tokens_override=256)
+            enrichment.gate4_three_functions(
+                self.ctx, self.handle, self.gen, self.snap, max_new_tokens_override=256
+            )
         self.assertEqual(captured, [256, 256, 256])
 
     def test_gate4_does_not_gate_on_identical_or_insufficient_purposes(self):
         # A model that answers identically (or with the fallback phrase) for
         # all three functions is a real, weak-model comparison result -- it
         # must still pass GATE 4, not be rejected as if it were a failure.
-        same_text = json.dumps({**json.loads(VALID_ENRICHMENT_JSON),
-                                "purpose": "Insufficient implementation context."})
+        same_text = json.dumps(
+            {**json.loads(VALID_ENRICHMENT_JSON), "purpose": "Insufficient implementation context."}
+        )
         with mock.patch.object(models, "generate_text", return_value=_gen_result(same_text)):
             result = enrichment.gate4_three_functions(self.ctx, self.handle, self.gen, self.snap)
         self.assertTrue(result["passed"])
@@ -1150,15 +1395,22 @@ class GateBehaviorTests(unittest.TestCase):
         # the old 0.95 threshold, but never 5 consecutive failures (so this
         # is not exercising the (still-kept) systemic-failure circuit
         # breaker, only the removed success-rate gate).
-        responses = iter([
-            _gen_result("not json"), _gen_result("not json"),
-            _gen_result(VALID_ENRICHMENT_JSON),
-            _gen_result("not json"), _gen_result("not json"),
-            _gen_result("not json"), _gen_result("not json"),
-            _gen_result(VALID_ENRICHMENT_JSON),
-        ])
+        responses = iter(
+            [
+                _gen_result("not json"),
+                _gen_result("not json"),
+                _gen_result(VALID_ENRICHMENT_JSON),
+                _gen_result("not json"),
+                _gen_result("not json"),
+                _gen_result("not json"),
+                _gen_result("not json"),
+                _gen_result(VALID_ENRICHMENT_JSON),
+            ]
+        )
         self._record_all_gates_passed()
-        with mock.patch.object(models, "generate_text", side_effect=lambda *a, **k: next(responses)):
+        with mock.patch.object(
+            models, "generate_text", side_effect=lambda *a, **k: next(responses)
+        ):
             result = enrichment.run_full_enrichment(self.ctx, self.handle, self.gen, self.snap)
         self.assertFalse(result["partial"])
         self.assertEqual(result["metrics"]["functions_enriched"], 2)
@@ -1172,22 +1424,34 @@ class GateBehaviorTests(unittest.TestCase):
 class DynamicMaxNewTokensTests(unittest.TestCase):
     def test_max_new_tokens_for_context_uses_model_context_window(self):
         handle = mock.Mock()
-        handle.model.config = mock.Mock(max_position_embeddings=4096, n_positions=None,
-                                        max_sequence_length=None, seq_length=None)
+        handle.model.config = mock.Mock(
+            max_position_embeddings=4096,
+            n_positions=None,
+            max_sequence_length=None,
+            seq_length=None,
+        )
         result = models.max_new_tokens_for_context(handle, input_tokens=1000, safety_margin=64)
         self.assertEqual(result, 4096 - 1000 - 64)
 
     def test_max_new_tokens_for_context_never_goes_below_minimum(self):
         handle = mock.Mock()
-        handle.model.config = mock.Mock(max_position_embeddings=2048, n_positions=None,
-                                        max_sequence_length=None, seq_length=None)
+        handle.model.config = mock.Mock(
+            max_position_embeddings=2048,
+            n_positions=None,
+            max_sequence_length=None,
+            seq_length=None,
+        )
         result = models.max_new_tokens_for_context(handle, input_tokens=2000, min_new_tokens=256)
         self.assertEqual(result, 256)
 
     def test_max_new_tokens_for_context_capped_at_kv_reservation(self):
         handle = mock.Mock()
-        handle.model.config = mock.Mock(max_position_embeddings=131072, n_positions=None,
-                                        max_sequence_length=None, seq_length=None)
+        handle.model.config = mock.Mock(
+            max_position_embeddings=131072,
+            n_positions=None,
+            max_sequence_length=None,
+            seq_length=None,
+        )
         result = models.max_new_tokens_for_context(handle, input_tokens=1000, safety_margin=64)
         self.assertEqual(result, models._UNCAPPED_RESERVE_TOKENS - 1000 - 64)
 
@@ -1199,8 +1463,12 @@ class DynamicMaxNewTokensTests(unittest.TestCase):
         try:
             fn = _minimal_base_json(1)["files"][0]["functions"][0]
             spec = models.ModelSpec(
-                slug="dynamic-budget-model", model_id="fake-org/fake-model", quantization="fp16",
-                single_gpu_tier="A", max_input_tokens=1000, max_new_tokens=None,
+                slug="dynamic-budget-model",
+                model_id="fake-org/fake-model",
+                quantization="fp16",
+                single_gpu_tier="A",
+                max_input_tokens=1000,
+                max_new_tokens=None,
             )
             handle = _FakeHandle(spec)
             gen = GenerationSettings(retries=0, max_new_tokens=None)
@@ -1210,8 +1478,12 @@ class DynamicMaxNewTokensTests(unittest.TestCase):
                 captured["max_new_tokens"] = max_new_tokens
                 return _gen_result(VALID_ENRICHMENT_JSON)
 
-            with mock.patch.object(models, "max_new_tokens_for_context", return_value=12345) as fake_dynamic, \
-                 mock.patch.object(models, "generate_text", side_effect=_capture):
+            with (
+                mock.patch.object(
+                    models, "max_new_tokens_for_context", return_value=12345
+                ) as fake_dynamic,
+                mock.patch.object(models, "generate_text", side_effect=_capture),
+            ):
                 enrichment.enrich_one(handle, fn, gen, root / "attempts.jsonl")
             fake_dynamic.assert_called_once()
             self.assertEqual(captured["max_new_tokens"], 12345)
